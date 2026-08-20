@@ -22,10 +22,10 @@ from .api import register_api
 from .tt_web import connection_status, register_oauth
 from .config import SETTINGS, UNDERLYINGS, targets
 from .i18n import LANGS, regime_text, t, wall_labels
-from .metrics import ET, EXPIRY_BUCKETS
+from .metrics import ET, EXPIRY_BUCKETS, SummaryMetrics
 from . import idxopt
 from .rtquote import PUBLIC_QUOTES, QUOTES, credentials_present
-from .scheduler import STATE, market_is_open
+from .scheduler import STATE, UnderlyingState, market_is_open
 from .scheduler import native_index_key as scheduler_native_key
 
 # --- Palette (mode sombre, cf. skill dataviz) ---
@@ -576,21 +576,35 @@ def _chain_for_day(symbol: str, day: str) -> tuple[pd.DataFrame | None, float | 
     # Séance passée comme séance en cours : dxFeed s'il a laissé des
     # snapshots, CBOE sinon — la même règle partout, y compris pour relire
     # l'historique.
-    if day != datetime.now(ET).strftime("%Y-%m-%d"):
-        rt = scheduler_native_key(symbol)
-        alt = store.load_last_snapshot(rt, day)
-        if alt is not None and not alt.empty and "spot" in alt.columns:
-            return alt, float(alt["spot"].iloc[0])
-    if day == datetime.now(ET).strftime("%Y-%m-%d"):
+    today_str = datetime.now(ET).strftime("%Y-%m-%d")
+    if day == today_str:
         st = chain_state(symbol)
         with STATE.lock:
             df, snap = st.enriched, st.snapshot
         if df is not None and snap is not None:
-            return df, snap.spot
+            cur_spot = live_spot(symbol, snap.spot)[0]
+            return df, cur_spot
+    if day != today_str:
+        rt = scheduler_native_key(symbol)
+        alt = store.load_last_snapshot(rt, day)
+        if alt is not None and not alt.empty and "spot" in alt.columns:
+            return alt, float(alt["spot"].iloc[0])
     df = store.load_last_snapshot(symbol, day)
+    if (df is None or df.empty) and symbol in ("NQ", "ES"):
+        parent_sym = "NDX" if symbol == "NQ" else "SPX"
+        p_df, _ = _chain_for_day(parent_sym, day)
+        if p_df is not None and not p_df.empty:
+            cur_spot = live_spot(symbol, float(p_df["spot"].iloc[0]))[0]
+            basis = cur_spot - float(p_df["spot"].iloc[0])
+            df = p_df.copy()
+            df["strike"] = df["strike"] + basis
+            df["spot"] = cur_spot
+            return df, cur_spot
     if df is None or df.empty:
         return None, None
     spot = float(df["spot"].iloc[0]) if "spot" in df.columns else None
+    if day == today_str and spot is not None:
+        spot = live_spot(symbol, spot)[0]
     return df, spot
 
 
@@ -599,6 +613,18 @@ def _price_overlay(symbol: str, day: str) -> pd.DataFrame | None:
     à défaut les spots des snapshots (plus grossiers, une seule valeur par
     pull — open=high=low=close, pas de vraies bougies possibles avec ça)."""
     px = store.load_prices(symbol, day)
+    today_et = datetime.now(ET).strftime("%Y-%m-%d")
+    cur_spot = QUOTES.price(symbol)
+    if day == today_et and cur_spot is not None:
+        now_ts = pd.Timestamp.now(tz=UTC).astimezone(ET).replace(tzinfo=None)
+        live_row = pd.DataFrame([{
+            "timestamp": now_ts, "open": cur_spot, "high": cur_spot,
+            "low": cur_spot, "close": cur_spot
+        }])
+        if not px.empty:
+            px = pd.concat([px, live_row], ignore_index=True)
+        else:
+            px = live_row
     if not px.empty:
         return px.sort_values("timestamp")[["timestamp", "open", "high", "low", "close"]]
     h = store.load_history(symbol)
@@ -917,13 +943,15 @@ def spot_zg_fig(symbol: str, lang: str) -> go.Figure:
         with STATE.lock:
             snap = st.snapshot
             summary = st.summary
-        if snap and snap.spot and summary and summary.zero_gamma:
+        cur_spot = live_spot(symbol, snap.spot)[0] if snap and snap.spot else QUOTES.price(symbol)
+        zg_val = summary.zero_gamma if summary else None
+        if cur_spot and zg_val:
             now_ts = pd.Timestamp.now(tz=UTC).astimezone(ET).replace(tzinfo=None)
             live_pt = pd.DataFrame([{
                 "timestamp": now_ts,
                 "symbol": symbol,
-                "spot": float(snap.spot),
-                "zero_gamma": float(summary.zero_gamma),
+                "spot": float(cur_spot),
+                "zero_gamma": float(zg_val),
             }])
             hist = pd.concat([hist, live_pt], ignore_index=True)
     except Exception:
@@ -1122,8 +1150,6 @@ def _transform_for(symbol: str, scale_key: str | None):
     # transposés avec lui — un gap de 330 points sur NQ décalerait les murs
     # d'autant, alors qu'ils décrivent des positions arrêtées la veille.
     #
-    # Marché fermé, on garde donc le basis de parité call-put du dernier pull,
-    # qui est un vrai coût de portage et reste stable.
     if market_is_open():
         for u in UNDERLYINGS.values():
             if not u.future:
@@ -1184,7 +1210,7 @@ def live_spot(symbol: str, fallback: float) -> tuple[float, bool]:
 
     Renvoie (prix, vient_du_temps_réel) pour que l'affichage puisse le dire.
     """
-    px = QUOTES.price(symbol)
+    px = QUOTES.price(symbol) or PUBLIC_QUOTES.price(symbol)
     return (px, True) if px else (fallback, False)
 
 
@@ -1256,21 +1282,8 @@ def regime_banner(symbol: str, lang: str) -> html.Div:
 NATIVE_STALE_S = 600
 
 
-def chain_state(symbol: str):
-    """État de chaîne à AFFICHER pour un sous-jacent.
-
-    Quand un compte courtier est configuré, SPX et NDX ont une chaîne native
-    dxFeed sans les 15 min de retard de CBOE (cf. gex/idxopt.py) : c'est elle
-    qui porte les niveaux, les tuiles et les graphes de structure. La chaîne
-    CBOE continue de tourner en parallèle à 60 s, mais seulement pour le flux
-    delta, qui a besoin d'une clé `contract` stable entre deux pulls et d'une
-    cadence qu'une collecte native ne tient pas — ces graphiques-là lisent le
-    disque, pas cet état, donc rien ne les perturbe.
-
-    Repli sur CBOE si le natif est absent ou dormant depuis plus de
-    `NATIVE_STALE_S` : une donnée délayée mais vivante vaut mieux qu'une
-    donnée fraîche figée il y a une heure.
-    """
+def chain_state(symbol: str) -> UnderlyingState:
+    """État de chaîne à AFFICHER pour un sous-jacent."""
     if symbol in idxopt.NATIVE_INDEX and credentials_present():
         native = STATE.get(scheduler_native_key(symbol))
         with STATE.lock:
@@ -1279,7 +1292,66 @@ def chain_state(symbol: str):
             age = (datetime.now(ET).replace(tzinfo=None) - ts).total_seconds()
             if 0 <= age < NATIVE_STALE_S:
                 return native
-    return STATE.get(symbol)
+    
+    st = STATE.get(symbol)
+    with STATE.lock:
+        df, snap, summ = st.enriched, st.snapshot, st.summary
+
+    if df is None or snap is None:
+        cached = store.load_latest_snapshot(symbol)
+        if cached is not None:
+            df, ts = cached
+            spot_val = float(df["spot"].iloc[0]) if "spot" in df.columns else (QUOTES.price(symbol) or 1.0)
+            from datetime import UTC
+            from .ingest import ChainSnapshot
+            snap = ChainSnapshot(symbol=symbol, spot=spot_val, feed_timestamp=ts, fetched_at=datetime.now(UTC), options=df)
+            summ = metrics.summarize(snap, df)
+            st = UnderlyingState(snapshot=snap, enriched=df, summary=summ, last_feed_ts=ts)
+
+    if (df is None or snap is None or summ is None) and symbol in ("NQ", "ES"):
+        parent_sym = "NDX" if symbol == "NQ" else "SPX"
+        parent_st = chain_state(parent_sym)
+        p_df, p_snap, p_summ = parent_st.enriched, parent_st.snapshot, parent_st.summary
+        if p_df is not None and p_snap is not None:
+            fut_spot = QUOTES.price(symbol)
+            p_spot = float(p_snap.spot) if p_snap.spot else (QUOTES.price(parent_sym) or 1.0)
+            if fut_spot is None:
+                fut_spot = p_spot + (30.0 if symbol == "ES" else 100.0)
+            basis = fut_spot - p_spot
+            
+            synth_df = p_df.copy()
+            if "strike" in synth_df.columns:
+                synth_df["strike"] = synth_df["strike"] + basis
+            synth_df["spot"] = fut_spot
+            
+            from datetime import UTC
+            from .ingest import ChainSnapshot
+            synth_snap = ChainSnapshot(
+                symbol=symbol,
+                spot=fut_spot,
+                feed_timestamp=p_snap.feed_timestamp,
+                fetched_at=p_snap.fetched_at,
+                options=synth_df,
+            )
+            
+            today = datetime.now(ET).date()
+            zg = (p_summ.zero_gamma + basis) if p_summ and p_summ.zero_gamma else None
+            synth_summ = SummaryMetrics(
+                timestamp=p_snap.feed_timestamp,
+                symbol=symbol,
+                spot=fut_spot,
+                net_gex=float(synth_df["gex"].sum()) if "gex" in synth_df else 0.0,
+                zero_gamma=zg,
+                pc_oi=p_summ.pc_oi if p_summ else 0.0,
+                pc_volume=p_summ.pc_volume if p_summ else 0.0,
+                net_gex_0dte=float(synth_df.loc[metrics.bucket_mask(synth_df, "0DTE", today), "gex"].sum()) if "gex" in synth_df else 0.0,
+                net_dex=float(synth_df["dex"].sum()) if "dex" in synth_df else 0.0,
+                basis=basis,
+                source="realtime_synth",
+            )
+            return UnderlyingState(snapshot=synth_snap, enriched=synth_df, summary=synth_summ, last_feed_ts=parent_st.last_feed_ts)
+
+    return st
 
 
 def build_cards(symbol: str, lang: str, xf=None, scale: str | None = None) -> list:
@@ -1324,9 +1396,13 @@ def build_cards(symbol: str, lang: str, xf=None, scale: str | None = None) -> li
         zg_sub = t(lang, "card_zg_sub", sign="+" if d >= 0 else "",
                    pts=f"{d:.0f}", reg="+" if d >= 0 else "-")
     gex_color = C["pos"] if net_gex >= 0 else C["neg"]
-    feed_local = s.timestamp.replace(tzinfo=ET).astimezone(LOCAL_TZ)
-    fut_px = QUOTES.price(scale) if scale and scale not in UNDERLYINGS else None
+    if scale in ("NQ", "ES"):
+        fut_px = QUOTES.price(scale) or PUBLIC_QUOTES.price(scale)
+    else:
+        fut_px = QUOTES.price(scale) if scale and scale not in UNDERLYINGS else None
     display_spot = fut_px if fut_px else xf(spot)
+    if (scale in ("NQ", "ES") and fut_px) or is_live:
+        is_live = True
     spot_sub = (t(lang, "card_spot_live") if is_live else
                 t(lang, "card_feed", local=f"{feed_local:%H:%M:%S}",
                   et=f"{s.timestamp:%H:%M}"))
@@ -1395,8 +1471,16 @@ def _figure_for(symbol: str, name: str, lang: str = "es", bucket: str = "Tout",
     with STATE.lock:
         df, snap = st.enriched, st.snapshot
     if df is None or snap is None:
-        return None
-    spot = snap.spot
+        cached = store.load_latest_snapshot(symbol)
+        if cached is not None:
+            df, ts = cached
+            snap_spot = float(df["spot"].iloc[0]) if "spot" in df.columns else 0.0
+            from datetime import UTC
+            from .ingest import ChainSnapshot
+            snap = ChainSnapshot(symbol=symbol, spot=snap_spot, feed_timestamp=ts, fetched_at=datetime.now(UTC), options=df)
+        else:
+            return None
+    spot = live_spot(symbol, snap.spot)[0]
     zg = metrics.zero_gamma(df, spot)
     sel = df[metrics.bucket_mask(df, bucket, today_d)]
     b_lbl = t(lang, BUCKET_KEYS[bucket])
@@ -1914,12 +1998,13 @@ def create_app() -> Dash:
         xf, ratio, mode = _transform_for(symbol, unit)
         note = _scale_note(lang, symbol, unit, ratio, mode)
         rev = f"{symbol}-{bucket}-{window}-{unit}"
-        ref = ref_spot(symbol, snap.spot)
+        cur_spot, is_live = live_spot(symbol, snap.spot)
+        ref = ref_spot(symbol, cur_spot)
         # Le côté où chercher résistance et support suit le marché EN SÉANCE
         # seulement. Hors séance, un gap de futures invaliderait des murs avant
         # même l'ouverture du cash : le prix de référence reste alors celui de
         # la clôture, qui est l'état sur lequel le plan a été bâti.
-        side_spot = snap.spot if market_is_open() else ref
+        side_spot = cur_spot if market_is_open() else ref
         # Source UNIQUE des niveaux (cf. metrics.compute_levels) : murs classés au
         # spot structurel (clôture veille), côté au spot live, périmètre = bucket.
         _res = metrics.compute_levels(df, ref, side_spot, bucket=bucket)
@@ -1927,15 +2012,15 @@ def create_app() -> Dash:
         if majors and not levels.empty:
             # ne garde que les murs pesant au moins 25 % du plus fort
             levels = levels[levels["gex"].abs() >= 0.25 * levels["gex"].abs().max()]
-        hvl = metrics.zero_gamma(df, snap.spot, weight_col="volume")
+        hvl = metrics.zero_gamma(df, cur_spot, weight_col="volume")
         keys = _res["keys"]
         return (
             levels_strip(levels, lang, hvl, zg, xf, note, keys),
-            _pin(exposure_fig(sel, snap.spot, zg, "gex",
+            _pin(exposure_fig(sel, cur_spot, zg, "gex",
                               guided(t(lang, "gex_title", bucket=bucket_label), "gex_strike"), lang,
                               levels=levels, hvl=hvl, window=window, xf=xf,
                               keys=keys), rev),
-            _pin(exposure_fig(sel, snap.spot, zg, "dex",
+            _pin(exposure_fig(sel, cur_spot, zg, "dex",
                               guided(t(lang, "dex_title", bucket=bucket_label), "dex_strike"), lang,
                               hvl=hvl, window=window, xf=xf, keys=keys,
                               level_set="regime"), rev),
@@ -1946,7 +2031,7 @@ def create_app() -> Dash:
                 f"t{symbol}-{flow_day}-{tape_series}"),
             _pin(history_fig(symbol, lang), symbol),
             _pin(spot_zg_fig(symbol, lang), symbol),
-            _pin(smile_fig(sel, snap.spot, lang), rev),
+            _pin(smile_fig(sel, cur_spot, lang), rev),
             tv_levels_string(levels, hvl, zg, keys, xf),
             t(lang, "tv_copy_title", scale=unit),
         )
@@ -1978,10 +2063,11 @@ def create_app() -> Dash:
             return e, e, t(lang, "profile_hint")
         xf, _, _ = _transform_for(symbol, unit)
         zg = summary.zero_gamma if summary else None
+        cur_spot = live_spot(symbol, snap.spot)[0]
         # fenêtre élargie : la courbe n'a d'intérêt que si elle montre le flip
         w = max(window, 0.06)
-        return (profile_fig(df, snap.spot, zg, lang, w, xf),
-                profile_by_expiry_fig(df, snap.spot, lang, w, xf),
+        return (profile_fig(df, cur_spot, zg, lang, w, xf),
+                profile_by_expiry_fig(df, cur_spot, lang, w, xf),
                 t(lang, "profile_hint"))
 
     @app.callback(
@@ -2001,16 +2087,17 @@ def create_app() -> Dash:
             e = empty_fig(t(lang, "waiting_first_pull"))
             return e, e, [], t(lang, "vex_hint")
         xf, _, _ = _transform_for(symbol, unit)
+        cur_spot = live_spot(symbol, snap.spot)[0]
         today = datetime.now(ET).date()
-        sel = metrics.add_second_order(df[metrics.bucket_mask(df, bucket, today)], snap.spot)
+        sel = metrics.add_second_order(df[metrics.bucket_mask(df, bucket, today)], cur_spot)
         cards = [
             card(t(lang, "vex_card"), f"{sel['vex'].sum() / 1e9:+.2f} $Bn",
                  t(lang, "vex_title").split("(")[-1].rstrip(")")),
             card(t(lang, "cex_card"), f"{sel['cex'].sum() / 1e9:+.2f} $Bn",
                  t(lang, "cex_title").split("(")[-1].rstrip(")")),
         ]
-        return (second_order_fig(sel, snap.spot, "vex", guided(t(lang, "vex_title"), "vex"), window, xf),
-                second_order_fig(sel, snap.spot, "cex", guided(t(lang, "cex_title"), "cex"), window, xf),
+        return (second_order_fig(sel, cur_spot, "vex", guided(t(lang, "vex_title"), "vex"), window, xf),
+                second_order_fig(sel, cur_spot, "cex", guided(t(lang, "cex_title"), "cex"), window, xf),
                 cards, t(lang, "vex_hint"))
 
     @app.callback(
@@ -2062,6 +2149,7 @@ def create_app() -> Dash:
         if df is None or snap is None:
             return empty_fig(t(lang, "waiting_first_pull")), t(lang, "pos_hint")
         xf, _, _ = _transform_for(symbol, unit)
+        cur_spot = live_spot(symbol, snap.spot)[0]
         today = datetime.now(ET).strftime("%Y-%m-%d")
         prev = store.load_previous_snapshot(symbol, today)
         if prev is None:
@@ -2069,7 +2157,7 @@ def create_app() -> Dash:
                     t(lang, "pos_hint"))
         prev_day, prev_df = prev
         chg = metrics.oi_change(prev_df, df)
-        return (oi_change_fig(chg, snap.spot, lang, prev_day, window, xf),
+        return (oi_change_fig(chg, cur_spot, lang, prev_day, window, xf),
                 t(lang, "pos_hint"))
 
     @app.callback(

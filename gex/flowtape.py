@@ -518,7 +518,7 @@ class FlowTape:
                 time.sleep(1.0)
                 now = time.time()
                 for sym in symbols:
-                    spot = self._spot.get(sym) or (7708.0 if sym == "SPX" else 29426.0 if sym == "NDX" else 770.0 if sym == "SPY" else 719.0 if sym == "QQQ" else 7738.0 if sym == "ES" else 29657.0)
+                    spot = QUOTES.price(sym) or self._spot.get(sym) or (7708.0 if sym == "SPX" else 29426.0 if sym == "NDX" else 770.0 if sym == "SPY" else 719.0 if sym == "QQQ" else 7738.0 if sym == "ES" else 29657.0)
                     step = 5.0 if sym in ("SPX", "ES") else 25.0 if sym in ("NDX", "NQ") else 1.0
                     strike = round(spot / step) * step + random.choice([-step, 0.0, step])
                     typ = random.choice(["C", "P"])
