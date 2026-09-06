@@ -5,7 +5,7 @@ a = Analysis(
     ['launcher.py'],
     pathex=[],
     binaries=[],
-    datas=[('gex', 'gex')],
+    datas=[('gex', 'gex'), ('.tools/cloudflared.exe', '.tools')],
     hiddenimports=['dash', 'pandas', 'scipy', 'plotly', 'dotenv'],
     hookspath=[],
     hooksconfig={},
