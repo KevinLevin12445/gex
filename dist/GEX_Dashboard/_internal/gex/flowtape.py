@@ -515,6 +515,10 @@ class FlowTape:
     def start(self) -> None:
         if self._started:
             return
+        from .rtquote import credentials_present
+        if not credentials_present():
+            self._state = "off"
+            return
         self._started = True
         self._state = "connected"
         threading.Thread(target=self._run, name="flowtape", daemon=True).start()

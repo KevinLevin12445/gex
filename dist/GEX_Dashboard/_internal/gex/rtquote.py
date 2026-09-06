@@ -76,6 +76,25 @@ STALE_S = 30.0
 BACKOFF_START, BACKOFF_MAX = 2.0, 60.0
 
 
+def is_refresh_token_valid_for_client(token: str | None, client_id: str | None) -> bool:
+    """Vérifie si le JWT refresh token correspond au client_id configuré."""
+    if not token or not client_id:
+        return False
+    try:
+        import base64
+        import json
+        parts = token.strip().split(".")
+        if len(parts) >= 2:
+            payload = parts[1] + "=" * (-len(parts[1]) % 4)
+            data = json.loads(base64.urlsafe_b64decode(payload))
+            aud = data.get("aud")
+            if aud and aud != client_id.strip():
+                return False
+    except Exception:
+        pass
+    return True
+
+
 def _env(name: str) -> str | None:
     """Variable d'environnement, avec repli sur le registre utilisateur Windows
     (une session ouverte avant `setx` ne voit pas la nouvelle valeur)."""
@@ -87,6 +106,17 @@ def _env(name: str) -> str | None:
                 val = winreg.QueryValueEx(k, name)[0]
         except OSError:
             pass
+    if name == "TT_REFRESH" and val:
+        cid = os.environ.get("TASTYTRADE_CLIENT_ID")
+        if not cid and sys.platform == "win32":
+            import winreg
+            try:
+                with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment") as k:
+                    cid = winreg.QueryValueEx(k, "TASTYTRADE_CLIENT_ID")[0]
+            except OSError:
+                pass
+        if cid and not is_refresh_token_valid_for_client(val, cid):
+            return None
     return val
 
 
@@ -102,7 +132,8 @@ def credentials_present() -> bool:
         return True
     has_cid = _is_real_val(_env("TASTYTRADE_CLIENT_ID"))
     has_sec = _is_real_val(_env("TASTYTRADE_CLIENT_SECRET"))
-    return has_cid and has_sec
+    has_ref = _is_real_val(_env("TT_REFRESH"))
+    return has_cid and has_sec and has_ref
 
 
 # Champs demandés à FEED_SETUP, DANS CET ORDRE — cf. quote-streamer.ts du SDK
@@ -174,16 +205,17 @@ def quote_token() -> tuple[str, str, str]:
         url = _env("DXFEED_ENDPOINT") or "wss://live.dxfeed.com/live/websocket"
         return dx_direct, url, ""
 
+    headers = {"User-Agent": "gex-dashboard/1.0"}
     r = requests.post(TOKEN_URL, data={
         "grant_type": "refresh_token",
         "refresh_token": _env("TT_REFRESH"),
         "client_id": _env("TASTYTRADE_CLIENT_ID"),
         "client_secret": _env("TASTYTRADE_CLIENT_SECRET"),
-    }, timeout=30)
+    }, headers=headers, timeout=30)
     r.raise_for_status()
     access = r.json()["access_token"]
     q = requests.get(QUOTE_TOKEN_URL,
-                     headers={"Authorization": f"Bearer {access}"}, timeout=30)
+                     headers={"Authorization": f"Bearer {access}", "User-Agent": "gex-dashboard/1.0"}, timeout=30)
     q.raise_for_status()
     d = q.json()["data"]
     return d["token"], d["dxlink-url"], access
@@ -298,6 +330,7 @@ class RealtimeQuotes:
     _started: bool = False
     # symbole dxFeed -> clé interne ("SPX", "ES"…)
     _by_stream: dict[str, str] = field(default_factory=dict)
+    _wake_event: threading.Event = field(default_factory=threading.Event)
     # Bougies 1 min construites à la volée. Agréger ici plutôt que d'échantillonner
     # le dernier prix donne des extrêmes exacts : on voit passer chaque tick,
     # donc les mèches ne sont pas perdues — ce qui est précisément ce qui
@@ -306,6 +339,13 @@ class RealtimeQuotes:
     _done: list[tuple[str, Bar]] = field(default_factory=list)
 
     # ------------------------------------------------------------- démarrage
+    def wake(self) -> None:
+        """Réveille immédiatement le thread en cas de nouveaux identifiants."""
+        self._state = "connecting"
+        self._wake_event.set()
+        if not self._started and credentials_present():
+            self.start()
+
     def start(self) -> None:
         if self._started:
             return
@@ -323,7 +363,12 @@ class RealtimeQuotes:
         """Dernier prix connu pour une clé interne ("SPX", "ES", "NQ"…)."""
         with self.lock:
             t = self.ticks.get(key)
-            return t.price if t else None
+            if t and t.price is not None:
+                return t.price
+        # Si QUOTES n'a pas encore de tick (ex. en cours de connexion), repli public sur NQ/ES
+        if self is QUOTES and key in ("NQ", "ES"):
+            return PUBLIC_QUOTES.price(key)
+        return None
 
     def status(self, market_open: bool = True) -> tuple[str, str]:
         """(état, détail) — état ∈ off | connected | degraded | disconnected.
@@ -362,7 +407,8 @@ class RealtimeQuotes:
                 self._detail = str(exc)[:120]
                 log.warning("Flux dxFeed interrompu (%s) — reprise dans %.0f s",
                             exc, backoff)
-            time.sleep(backoff)
+            self._wake_event.wait(timeout=backoff)
+            self._wake_event.clear()
             backoff = min(backoff * 2, BACKOFF_MAX)
 
     async def _session(self) -> None:
@@ -506,12 +552,22 @@ class PublicDelayedQuotes(RealtimeQuotes):
     def start(self) -> None:
         if self._started:
             return
-        if credentials_present():
-            return  # un compte réel est configuré : pas de repli à lancer
         self._started = True
         self._state = "connecting"
         threading.Thread(target=self._run, name="rtquote-public", daemon=True).start()
         log.info("Spot NQ/ES délayé (public, sans compte) : démarrage")
+
+    def price(self, key: str) -> float | None:
+        px = super().price(key)
+        if px is not None:
+            return px
+        if key == "NQ":
+            from .scales import get_yahoo_cfd_price
+            return get_yahoo_cfd_price("NQ_FUT")
+        elif key == "ES":
+            from .scales import get_yahoo_cfd_price
+            return get_yahoo_cfd_price("ES_FUT")
+        return None
 
     def _quote_token(self) -> tuple[str, str, str]:
         # "demo" : aucun jeton réel requis (AUTH_STATE renvoie AUTHORIZED

@@ -200,6 +200,7 @@ def exchange_code(client_id: str, secret: str, code: str) -> dict:
             "client_secret": secret,
             "redirect_uri": REDIRECT_URI,
         },
+        headers={"User-Agent": "gex-dashboard/1.0"},
         timeout=30,
     )
     if resp.status_code != 200:

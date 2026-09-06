@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+import requests
 import dash
 from dash import Dash, ctx, dcc, html, no_update
 from dash.dependencies import Input, Output, State
@@ -3633,13 +3634,13 @@ def create_app() -> Dash:
 
                     # Quick 3-Step Guide
                     html.Div([
-                        html.Div(id="tt-guide-title", className="tt-guide-title", children="¿Cómo obtener tus credenciales en 1 minuto?"),
-                        html.Div(id="tt-step-1", children="1. Inicia sesión en my.tastytrade.com > Manage > My Profile > API > OAuth Applications."),
+                        html.Div(id="tt-guide-title", className="tt-guide-title", children="¿Cómo conectar con Tastytrade en 2 clics?"),
+                        html.Div(id="tt-step-1", children="1. Verifica que tu Client ID y Client Secret estén pegados arriba."),
                         html.Div([
-                            html.Span(id="tt-step-2-pre", children="2. Haz clic en '+ New OAuth client', nombre 'GEX', Scope 'read', y Redirect URI: "),
-                            html.Code("http://localhost:8050/oauth/callback", className="tt-guide-code"),
+                            html.Span(id="tt-step-2-pre", children="2. Haz clic en '⚡ Guardar y Conectar' o abre directamente: "),
+                            html.A("🔗 Autorizar en Tastytrade", href="/oauth/start", target="_blank", style={"color": "#38bdf8", "textDecoration": "underline", "fontWeight": "bold"}),
                         ]),
-                        html.Div(id="tt-step-3", children="3. Copia el Client ID y Client Secret generados, pégalos arriba y haz clic en 'Guardar y Conectar'."),
+                        html.Div(id="tt-step-3", children="3. Haz clic en 'Approve' en Tastytrade. El dashboard se conectará automáticamente y los precios se moverán en tiempo real."),
                     ], className="tt-guide-box"),
 
                     # Modal Action buttons
@@ -3943,25 +3944,31 @@ def create_app() -> Dash:
         [Input("rt-tick", "n_intervals"), Input("lang", "value")],
     )
     def rt_status(_, lang):
-        """Provenance du spot affiché, et pastille d'état du flux temps réel.
-
-        Le badge reste masqué sur une installation sans identifiants courtier :
-        inutile d'attirer l'œil sur une fonctionnalité non configurée. En
-        revanche, si un compte est renseigné, l'état doit être explicite.
-        """
-        # La pastille suit rtquote : vert = flux actif (dxFeed connecté),
-        # orange = secours CBOE (reconnexion dxFeed en cours), rouge = déconnecté.
+        """Provenance du spot affiché, et pastille d'état du flux temps réel."""
         is_rt = credentials_present()
-        if not is_rt:
-            return (t(lang, "brand_sub"), {"display": "inline-flex", "cursor": "pointer"},
-                    "rt-badge rt-disconnected", t(lang, "rt_disconnected") + " — Clic para configurar API",
-                    "OFFLINE", {"display": "none"}, "", "")
         state, detail = QUOTES.status(market_open=market_is_open())
-        badge_state = state if state in ("connected", "degraded") else "connected"
-        conn_style = {"display": "none"}
-        return (t(lang, "brand_sub_rt"), {"display": "inline-flex", "cursor": "pointer"},
-                f"rt-badge rt-{badge_state}", "Tastytrade API Conectada — Tiempo Real Activo",
-                "LIVE", conn_style, t(lang, "tt_connect"), "")
+        has_public_ticks = bool(PUBLIC_QUOTES.ticks)
+
+        if state == "connected":
+            return (t(lang, "brand_sub_rt"), {"display": "inline-flex", "cursor": "pointer"},
+                    "rt-badge rt-connected", "Tastytrade dxLink Conectado — Tiempo Real Activo",
+                    "LIVE (Tasty)", {"display": "none"}, "", "")
+        elif state == "degraded":
+            return (t(lang, "brand_sub_rt"), {"display": "inline-flex", "cursor": "pointer"},
+                    "rt-badge rt-degraded", f"Tastytrade conectado — esperando cotizaciones ({detail})",
+                    "SYNC", {"display": "none"}, "", "")
+        elif has_public_ticks:
+            return (t(lang, "brand_sub_rt"), {"display": "inline-flex", "cursor": "pointer"},
+                    "rt-badge rt-connected", "dxFeed CME Futures Activo — Precios en vivo",
+                    "LIVE (CME)", {"display": "none"}, "", "")
+        elif is_rt:
+            return (t(lang, "brand_sub"), {"display": "inline-flex", "cursor": "pointer"},
+                    "rt-badge rt-disconnected", f"Reconectando Tastytrade ({detail or 'iniciando'})... Clic para configurar",
+                    "CONNECTING", {"display": "none"}, "", "")
+        else:
+            return (t(lang, "brand_sub"), {"display": "inline-flex", "cursor": "pointer"},
+                    "rt-badge rt-disconnected", t(lang, "rt_disconnected") + " — Clic para configurar API Tastytrade",
+                    "OFFLINE", {"display": "none"}, "", "")
 
     @app.callback(
         [Output("native-banner", "children"), Output("native-banner", "style"),
@@ -4550,10 +4557,26 @@ def create_app() -> Dash:
                 dummy_val
             )
 
-        tt_auth.save_credentials(cid, sec, ref)
+        ref_valid = False
+        if ref:
+            try:
+                headers = {"User-Agent": "gex-dashboard/1.0"}
+                r = requests.post("https://api.tastyworks.com/oauth/token", data={
+                    "grant_type": "refresh_token",
+                    "refresh_token": ref,
+                    "client_id": cid,
+                    "client_secret": sec,
+                }, headers=headers, timeout=5)
+                if r.status_code == 200:
+                    ref_valid = True
+                else:
+                    log.warning("Test token failed (%s): %s", r.status_code, r.text[:200])
+            except Exception as e:
+                log.warning("Test token error: %s", e)
 
         if trig == "tt-modal-save-connect-btn":
-            if ref:
+            if ref and ref_valid:
+                tt_auth.save_credentials(cid, sec, ref)
                 from .tt_web import _demarrer_les_flux
                 _demarrer_les_flux()
                 return (
@@ -4563,8 +4586,23 @@ def create_app() -> Dash:
                     dummy_val
                 )
             else:
-                return "/oauth/start", t(lang, "tt_saved_success") + " Conectando...", {"display": "block", "background": "rgba(57, 135, 229, 0.15)", "color": "#38bdf8", "border": "1px solid rgba(57, 135, 229, 0.3)"}, dummy_val
+                tt_auth.save_credentials(cid, sec, None)
+                return "/oauth/start", "Iniciando autorización con Tastytrade...", {"display": "block", "background": "rgba(57, 135, 229, 0.15)", "color": "#38bdf8", "border": "1px solid rgba(57, 135, 229, 0.3)"}, dummy_val
 
+        # trig == "tt-modal-save-btn"
+        if ref and not ref_valid:
+            tt_auth.save_credentials(cid, sec, None)
+            return (
+                no_update,
+                "Client ID y Secret guardados. El Refresh Token no coincidía y fue omitido. Clic en 'Guardar y Conectar' para autorizar.",
+                {"display": "block", "background": "rgba(234, 179, 8, 0.15)", "color": "#facc15", "border": "1px solid rgba(234, 179, 8, 0.3)"},
+                dummy_val
+            )
+
+        tt_auth.save_credentials(cid, sec, ref)
+        if ref and ref_valid:
+            from .tt_web import _demarrer_les_flux
+            _demarrer_les_flux()
         return (
             no_update,
             t(lang, "tt_saved_success"),

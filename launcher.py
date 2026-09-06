@@ -28,8 +28,14 @@ else:
     base_dir = Path(__file__).resolve().parent
     exe_dir = base_dir
 
+import sys
+if sys.stdout and hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if sys.stderr and hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 from dotenv import load_dotenv
-load_dotenv()
+load_dotenv(override=True)
 
 from gex.run import main
 
@@ -114,7 +120,7 @@ def start_tunnel_and_browser() -> None:
             cmd = [
                 str(ngrok_path),
                 "http",
-                "8050",
+                "127.0.0.1:8050",
                 f"--url=https://{ngrok_domain}",
                 "--log=stdout",
             ]
@@ -138,20 +144,28 @@ def start_tunnel_and_browser() -> None:
                 if time.time() - start_time > 15:
                     break
 
+            def _drain(proc):
+                try:
+                    for _ in proc.stdout:
+                        pass
+                except Exception:
+                    pass
+            threading.Thread(target=_drain, args=(_tunnel_proc,), daemon=True).start()
+
             if not public_url:
                 public_url = f"https://{ngrok_domain}"
 
             _copy_to_clipboard(public_url)
             print()
             print("=" * 70)
-            print("  🚀 GEX DASHBOARD - EN LÍNEA (DOMINIO FIJO PERMANENTE NGROK)")
+            print("  [*] GEX DASHBOARD - EN LINEA (DOMINIO FIJO PERMANENTE NGROK)")
             print("=" * 70)
-            print(f"  🌐 Enlace permanente : {public_url}")
-            print("  📋 [OK] ¡Enlace copiado automáticamente a tu portapapeles!")
-            print("  💻 Acceso local       : http://127.0.0.1:8050")
+            print(f"  [>] Enlace permanente : {public_url}")
+            print("  [+] Enlace copiado automaticamente a tu portapapeles!")
+            print("  [+] Acceso local       : http://127.0.0.1:8050")
             print("=" * 70)
-            print("  * ¡Este enlace NUNCA cambia! Puedes guardarlo en favoritos o en tu cel.")
-            print("  * Para cerrar la sesión y apagar el enlace, cierra esta ventana.")
+            print("  * Este enlace NUNCA cambia. Puedes guardarlo en favoritos.")
+            print("  * Para cerrar la sesion y apagar el enlace, cierra esta ventana.")
             print("=" * 70)
             print()
             webbrowser.open(public_url)
@@ -183,15 +197,23 @@ def start_tunnel_and_browser() -> None:
                 if time.time() - start_time > 20:
                     break
 
+            def _drain_cf(proc):
+                try:
+                    for _ in proc.stdout:
+                        pass
+                except Exception:
+                    pass
+            threading.Thread(target=_drain_cf, args=(_tunnel_proc,), daemon=True).start()
+
             if public_url:
                 _copy_to_clipboard(public_url)
                 print()
                 print("=" * 70)
-                print("  🚀 GEX DASHBOARD - EN LÍNEA (CLOUDFLARE)")
+                print("  [*] GEX DASHBOARD - EN LINEA (CLOUDFLARE)")
                 print("=" * 70)
-                print(f"  🌐 Enlace público : {public_url}")
-                print("  📋 [OK] ¡Enlace copiado automáticamente a tu portapapeles!")
-                print("  💻 Acceso local   : http://127.0.0.1:8050")
+                print(f"  [>] Enlace publico : {public_url}")
+                print("  [+] Enlace copiado automaticamente a tu portapapeles!")
+                print("  [+] Acceso local   : http://127.0.0.1:8050")
                 print("=" * 70)
                 webbrowser.open(public_url)
                 return
@@ -214,6 +236,6 @@ if __name__ == "__main__":
     threading.Thread(target=start_tunnel_and_browser, daemon=True).start()
 
     try:
-        main(host="127.0.0.1", port=8050)
+        main(host="0.0.0.0", port=8050)
     finally:
         _kill_tunnel()

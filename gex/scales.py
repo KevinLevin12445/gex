@@ -124,6 +124,8 @@ def transform(src_underlying: str, target: Scale | None,
 YAHOO_CFD_TICKERS = {
     "NQ": "^NDX",
     "ES": "^GSPC",
+    "NQ_FUT": "NQ=F",
+    "ES_FUT": "ES=F",
     "GC": "GC=F",
     "BTC": "BTC-USD",
 }

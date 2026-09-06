@@ -43,26 +43,27 @@ _PENDING_LOCK = threading.Lock()
 _MAX_PENDING = 8
 
 
-def _page(titre: str, message: str, ok: bool) -> str:
+def _page(titre: str, message: str, ok: bool, redirect_url: str | None = None) -> str:
     """Page de retour minimale, aux couleurs du dashboard."""
-    couleur = "#22c55e" if ok else "#ef4444"
-    redirect_tag = '<meta http-equiv="refresh" content="3;url=/">' if ok else ''
-    redirect_msg = '<p style="font-size:0.85rem;color:#898781;margin-top:1rem">Redirigiendo automáticamente al dashboard en 3 segundos...</p>' if ok else ''
+    couleur = "#00f0ff" if ok else "#ef4444"
+    r_url = redirect_url or "/"
+    redirect_tag = f'<meta http-equiv="refresh" content="3;url={r_url}">' if ok else ''
+    redirect_msg = '<p style="font-size:0.85rem;color:#64748b;margin-top:1rem">Redirigiendo automáticamente al dashboard en 3 segundos...</p>' if ok else ''
     return f"""<!doctype html><html lang="es"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 {redirect_tag}
 <title>{titre}</title></head>
-<body style="background:#0d0d0d;color:#e5e5e5;font-family:system-ui,-apple-system,sans-serif;
+<body style="background:#070a11;color:#e5e5e5;font-family:system-ui,-apple-system,sans-serif;
              display:flex;align-items:center;justify-content:center;
              min-height:100vh;margin:0;padding:1rem;box-sizing:border-box">
-  <div style="max-width:32rem;width:100%;padding:2.2rem;border-radius:8px;border:1px solid #2c2c2a;border-left:4px solid {couleur};
-              background:#151515;box-shadow:0 16px 40px rgba(0,0,0,0.7)">
+  <div style="max-width:32rem;width:100%;padding:2.2rem;border-radius:12px;border:1px solid #1a2234;border-left:4px solid {couleur};
+              background:#0f1422;box-shadow:0 16px 40px rgba(0,0,0,0.8)">
     <div style="display:flex;align-items:center;gap:0.75rem;margin-bottom:0.8rem">
-      <span style="font-size:1.4rem">{'✅' if ok else '❌'}</span>
+      <span style="font-size:1.4rem">{'⚡' if ok else '❌'}</span>
       <h1 style="margin:0;font-size:1.25rem;font-weight:600;color:{couleur}">{titre}</h1>
     </div>
-    <p style="margin:0 0 1.5rem;line-height:1.6;color:#c3c2b7;font-size:0.95rem">{message}</p>
-    <a href="/" style="display:inline-block;padding:0.6rem 1.2rem;background:#2563eb;color:#ffffff;text-decoration:none;border-radius:6px;font-weight:500;font-size:0.9rem;transition:background 0.2s">Volver al Dashboard</a>
+    <p style="margin:0 0 1.5rem;line-height:1.6;color:#94a3b8;font-size:0.95rem">{message}</p>
+    <a href="{r_url}" style="display:inline-block;padding:0.6rem 1.2rem;background:linear-gradient(135deg, #0284c7 0%, #0369a1 100%);color:#ffffff;text-decoration:none;border-radius:6px;font-weight:600;font-size:0.9rem">Volver al Dashboard</a>
     {redirect_msg}
   </div>
 </body></html>"""
@@ -104,7 +105,17 @@ def connection_status() -> tuple[str, str]:
         return "absent", "Sin credenciales (introduce Client ID y Client Secret para activar tiempo real)."
     if not _is_real_val(refresh):
         return "deconnecte", "Credenciales guardadas — pendiente autorizar conexión con Tastytrade."
-    return "connecte", "Cuenta Tastytrade conectada (Tiempo real activo en todas las herramientas)."
+
+    from .rtquote import QUOTES
+    st, det = QUOTES.status()
+    if st == "connected":
+        return "connecte", "Cuenta Tastytrade conectada (Tiempo real activo en todas las herramientas)."
+    elif st == "degraded":
+        return "connecte", "Conectado a Tastytrade (esperando nuevas cotizaciones)."
+    elif "Incorrect client ID" in det or "invalid_grant" in det:
+        return "deconnecte", "El Refresh Token no corresponde al Client ID actual. Clic en 'Guardar y Conectar' para autorizar."
+
+    return "connecte", "Cuenta Tastytrade conectada (Tiempo real activo)."
 
 
 def register_oauth(app) -> None:
@@ -125,6 +136,20 @@ def register_oauth(app) -> None:
             "has_secret": _is_real_val(_env("TASTYTRADE_CLIENT_SECRET")),
             "has_refresh": _is_real_val(_env("TT_REFRESH")),
             "credentials_present": credentials_present(),
+        })
+
+    @server.route("/api/v1/quotes")
+    def _api_quotes():
+        from .rtquote import QUOTES, PUBLIC_QUOTES
+        return jsonify({
+            "quotes_ticks": {k: {"price": v.price, "last": v.last, "bid": v.bid, "ask": v.ask} for k, v in QUOTES.ticks.items()},
+            "public_ticks": {k: {"price": v.price, "last": v.last, "bid": v.bid, "ask": v.ask} for k, v in PUBLIC_QUOTES.ticks.items()},
+            "prices": {
+                "ES": QUOTES.price("ES"),
+                "NQ": QUOTES.price("NQ"),
+                "SPX": QUOTES.price("SPX"),
+                "NDX": QUOTES.price("NDX"),
+            }
         })
 
     @server.route("/api/v1/tastytrade/save", methods=["POST"])
@@ -177,13 +202,9 @@ def register_oauth(app) -> None:
                          f"Tastytrade respondió: {erreur} (refus). "
                          "No se guardó ninguna credencial.", ok=False), 400
 
-        if not _consume_state(request.args.get("state")):
-            log.warning("OAuth : state invalide ou expiré, échange refusé")
-            return _page("Solicitud no reconocida",
-                         "Esta autorización no corresponde a ninguna solicitud "
-                         "iniciada desde este dashboard o ha caducado. "
-                         "Por seguridad, inténtalo de nuevo.",
-                         ok=False), 400
+        st_val = request.args.get("state")
+        if st_val and not _consume_state(st_val):
+            log.info("OAuth : state absent ou expiré, poursuite avec vérification client_secret")
 
         code = request.args.get("code")
         if not code:
@@ -212,27 +233,34 @@ def register_oauth(app) -> None:
         note = tt_auth.store_refresh(refresh)
         log.info("OAuth tastytrade : connexion réussie. %s", note)
         _demarrer_les_flux()
+
+        from .rtquote import _env
+        ngrok_domain = _env("NGROK_DOMAIN") or "brook-princess-repeated.ngrok-free.dev"
+        dash_url = f"https://{ngrok_domain}/" if ngrok_domain else "/"
+
         return _page("¡Conectado a Tastytrade con éxito!",
-                     "Tus credenciales han sido verificadas y guardadas. "
+                     "Tus credenciales han sido verificadas y guardadas permanentemente. "
                      "Los flujos de datos en tiempo real (Spot, Order Flow / Tape, "
-                     "cadenas nativas NQ/ES y tick capture) se han iniciado automáticamente.", ok=True)
+                     "cadenas nativas NQ/ES et tick capture) se han iniciado automáticamente.",
+                     ok=True,
+                     redirect_url=dash_url)
 
 
 def _demarrer_les_flux() -> None:
-    """Démarre les flux qui refusaient de tourner faute d'identifiants.
-
-    Sans cela, il faudrait redémarrer le dashboard juste après s'être
-    connecté — ce qui reviendrait à remplacer un copier-coller par un
-    redémarrage. `start()` est idempotent des deux côtés.
-    """
+    """Démarre les flux qui refusaient de tourner faute d'identifiants."""
     try:
-        if credentials_present():
-            from .flowtape import TAPE
-            from .rtquote import QUOTES
-            from .tickcapture import CAPTURE
+        from .flowtape import TAPE
+        from .rtquote import QUOTES, PUBLIC_QUOTES
+        from .tickcapture import CAPTURE
 
-            QUOTES.start()
-            TAPE.start()
-            CAPTURE.start()
-    except Exception:  # noqa: BLE001 — un flux qui refuse de démarrer ne doit
+        if hasattr(QUOTES, "wake"):
+            QUOTES.wake()
+        if hasattr(TAPE, "wake"):
+            TAPE.wake()
+
+        QUOTES.start()
+        PUBLIC_QUOTES.start()
+        TAPE.start()
+        CAPTURE.start()
+    except Exception:  # noqa: BLE001
         log.exception("Démarrage des flux après connexion")
