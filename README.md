@@ -1,3 +1,13 @@
+---
+title: GEX Dashboard
+emoji: 📊
+colorFrom: indigo
+colorTo: blue
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
 # GEX Dashboard — Análisis de Gamma & Delta Exposure
 
 [Licencia MIT](LICENSE) — Herramienta de **análisis institucional**: sin trading, sin ejecución, sin asesoramiento de inversión. Obtiene datos desde los endpoints públicos de CBOE o en tiempo real mediante cuenta de broker (dxFeed / tastytrade).
