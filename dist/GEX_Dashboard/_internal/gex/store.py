@@ -48,27 +48,57 @@ def _write_atomic(df: pd.DataFrame, path: Path) -> None:
                            f".{uuid.uuid4().hex[:8]}.tmp")
     try:
         df.to_parquet(tmp, index=False)
-        for attempt in range(5):
+        for attempt in range(12):
             try:
                 os.replace(tmp, path)
                 break
-            except PermissionError:
-                if attempt == 4:
-                    raise
-                time.sleep(0.05 * (attempt + 1))
+            except (PermissionError, OSError):
+                if attempt == 11:
+                    # Si os.replace échoue sous Windows à cause d'un lecteur concurrent,
+                    # tentative d'écriture directe ou log
+                    try:
+                        df.to_parquet(path, index=False)
+                        break
+                    except Exception:
+                        raise
+                time.sleep(0.08 * (attempt + 1))
     except BaseException:
         # ne jamais laisser traîner un temporaire à moitié écrit
         tmp.unlink(missing_ok=True)
         raise
 
 
+_PARQUET_CACHE: dict[str, tuple[float, pd.DataFrame]] = {}
+_PARQUET_CACHE_LOCK = threading.Lock()
+
+
 def _safe_read_parquet(path: Path, **kwargs) -> pd.DataFrame:
-    """Lit un fichier parquet de façon robuste sous Windows contre les verrous concurrents."""
+    """Lit un fichier parquet de façon robuste et utilise un cache mémoire basé sur le mtime."""
     if not path.exists():
         return pd.DataFrame()
+    if not kwargs:
+        try:
+            mtime = os.path.getmtime(path)
+            key = str(path.resolve())
+            with _PARQUET_CACHE_LOCK:
+                cached = _PARQUET_CACHE.get(key)
+                if cached is not None and cached[0] == mtime:
+                    return cached[1].copy()
+        except OSError:
+            pass
+
     for attempt in range(5):
         try:
-            return pd.read_parquet(path, **kwargs)
+            df = pd.read_parquet(path, **kwargs)
+            if not kwargs:
+                try:
+                    mtime = os.path.getmtime(path)
+                    key = str(path.resolve())
+                    with _PARQUET_CACHE_LOCK:
+                        _PARQUET_CACHE[key] = (mtime, df)
+                except OSError:
+                    pass
+            return df
         except (PermissionError, OSError):
             if attempt == 4:
                 return pd.DataFrame()
@@ -106,7 +136,9 @@ def append_daily(kind: str, symbol: str, row: dict, ts: datetime) -> Path:
     with _lock_for(path):
         new = pd.DataFrame([row])
         if path.exists():
-            new = pd.concat([pd.read_parquet(path), new], ignore_index=True)
+            old = _safe_read_parquet(path)
+            if not old.empty:
+                new = pd.concat([old, new], ignore_index=True)
         _write_atomic(new, path)
     return path
 
@@ -120,7 +152,9 @@ def append_history(row: dict) -> Path:
     with _lock_for(path):
         new = pd.DataFrame([row])
         if path.exists():
-            new = pd.concat([pd.read_parquet(path), new], ignore_index=True)
+            old = _safe_read_parquet(path)
+            if not old.empty:
+                new = pd.concat([old, new], ignore_index=True)
         new = new.drop_duplicates(subset=["timestamp", "symbol"], keep="last").sort_values("timestamp")
         _write_atomic(new, path)
     return path
@@ -134,7 +168,9 @@ def append_index_spot(key: str, row: dict) -> Path:
     with _lock_for(path):
         new = pd.DataFrame([row])
         if path.exists():
-            new = pd.concat([pd.read_parquet(path), new], ignore_index=True)
+            old = _safe_read_parquet(path)
+            if not old.empty:
+                new = pd.concat([old, new], ignore_index=True)
         _write_atomic(new, path)
     return path
 

@@ -69,31 +69,102 @@ def reference_price(scale: Scale, spots: dict[str, float],
 
 
 def transform(src_underlying: str, target: Scale | None,
-              spots: dict[str, float], bases: dict[str, float | None]):
+              spots: dict[str, float], bases: dict[str, float | None],
+              cfd_offset: float = 0.0):
     """Retourne (fonction de conversion, ratio, mode) pour passer des prix du
-    sous-jacent source à l'échelle cible.
+    sous-jacent source à l'échelle cible, avec prise en charge optionnelle
+    d'un offset CFD (+/- différence de cotation courtier).
 
-    mode ∈ {"native", "basis", "ratio"} — "native" = aucune conversion.
+    mode ∈ {"native", "basis", "ratio", "cfd"} — "native" = aucune conversion.
     Retourne l'identité si la conversion est impossible (spot cible absent),
     plutôt que d'afficher des niveaux faux.
     """
     identity = (lambda x: x), 1.0, "native"
-    if target is None or target.key == src_underlying:
-        return identity
+    u_src = UNDERLYINGS.get(src_underlying)
+    if (u_src and u_src.family not in ("SP", "ND")) or src_underlying in ("GC", "BTC", "GLD", "IBIT"):
+        base_fn, ratio, mode = identity
+    elif target is None or target.key == src_underlying:
+        base_fn, ratio, mode = identity
+    else:
+        src_spot = spots.get(src_underlying)
+        if not src_spot:
+            base_fn, ratio, mode = identity
+        elif target.is_future and target.source == src_underlying:
+            # cas exact : l'indice vers son propre future
+            basis = bases.get(src_underlying)
+            if basis is None:
+                base_fn, ratio, mode = identity
+            else:
+                base_fn, ratio, mode = (lambda x: x + basis), 1.0, "basis"
+        elif target.family != (u_src.family if u_src else ""):
+            if (u_src and u_src.family in ("SP", "ND")) and target.family in ("SP", "ND"):
+                tgt = reference_price(target, spots, bases)
+                if not tgt:
+                    base_fn, ratio, mode = identity
+                else:
+                    ratio = tgt / src_spot
+                    base_fn, ratio, mode = (lambda x: x * ratio), ratio, "ratio"
+            else:
+                base_fn, ratio, mode = identity
+        else:
+            tgt = reference_price(target, spots, bases)
+            if not tgt:
+                base_fn, ratio, mode = identity
+            else:
+                ratio = tgt / src_spot
+                base_fn, ratio, mode = (lambda x: x * ratio), ratio, "ratio"
 
-    src_spot = spots.get(src_underlying)
-    if not src_spot:
-        return identity
+    if cfd_offset:
+        fn = (lambda x: None if x is None else base_fn(x) + cfd_offset)
+        return fn, ratio, (mode if mode != "native" else "cfd")
 
-    # cas exact : l'indice vers son propre future
-    if target.is_future and target.source == src_underlying:
-        basis = bases.get(src_underlying)
-        if basis is None:
-            return identity
-        return (lambda x: x + basis), 1.0, "basis"
+    return base_fn, ratio, mode
 
-    tgt = reference_price(target, spots, bases)
-    if not tgt:
-        return identity
-    ratio = tgt / src_spot
-    return (lambda x: x * ratio), ratio, "ratio"
+
+YAHOO_CFD_TICKERS = {
+    "NQ": "^NDX",
+    "ES": "^GSPC",
+    "GC": "GC=F",
+    "BTC": "BTC-USD",
+}
+
+_YAHOO_CACHE: dict[str, tuple[float, float]] = {}
+
+
+def get_yahoo_cfd_price(symbol: str) -> float | None:
+    """Récupère le cours au comptant / CFD de référence depuis Yahoo Finance."""
+    import time
+    import requests
+
+    ticker = YAHOO_CFD_TICKERS.get(symbol)
+    if not ticker:
+        return None
+    now = time.time()
+    cached = _YAHOO_CACHE.get(ticker)
+    if cached and now - cached[0] < 15:  # cache de 15s
+        return cached[1]
+
+    try:
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval=1m&range=1d"
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+        r = requests.get(url, headers=headers, timeout=4)
+        if r.status_code == 200:
+            meta = r.json().get("chart", {}).get("result", [{}])[0].get("meta", {})
+            price = float(meta.get("regularMarketPrice", 0.0))
+            if price > 0:
+                _YAHOO_CACHE[ticker] = (now, price)
+                return price
+    except Exception:
+        pass
+
+    return cached[1] if cached else None
+
+
+def get_auto_cfd_offset(symbol: str, fut_spot: float) -> float:
+    """Calcule l'écart exact (Spot CFD Yahoo - Spot Futurs CME) pour transposer les niveaux."""
+    if not fut_spot or fut_spot <= 0:
+        return 0.0
+    cfd_px = get_yahoo_cfd_price(symbol)
+    if cfd_px and cfd_px > 0:
+        return round(cfd_px - fut_spot, 2)
+    return 0.0

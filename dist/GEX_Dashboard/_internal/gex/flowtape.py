@@ -62,7 +62,7 @@ log = logging.getLogger(__name__)
 # sont parmi les options les plus traitées au monde (39 et 32 prints/s).
 TRACKED: dict[str, str] = {
     "SPX": "index", "NDX": "index", "SPY": "index", "QQQ": "index",
-    "ES": "future", "NQ": "future",
+    "ES": "future", "NQ": "future", "GC": "future", "BTC": "future",
 }
 
 # Fenêtre de souscription. Volontairement serrée : le flux qui compte se
@@ -165,39 +165,47 @@ class FlowBar:
 
 
 def option_type_of(streamer_symbol: str) -> str | None:
-    """C ou P, lu directement dans le symbole streamer.
-
-    Évite d'avoir à porter une table de correspondance en parallèle du flux :
-    les deux conventions rencontrées portent le type juste avant le strike —
-    `.SPXW260729C7400` (OPRA) et `./EWN26C7500:XCME` (CME). On lit donc le
-    dernier C/P qui précède une suite de chiffres, plutôt que le premier venu
-    (la racine peut contenir un C ou un P : QQQ n'en a pas, mais `.SPXWC…`
-    n'aurait rien d'impossible sur un autre produit).
-    """
-    core = streamer_symbol.split(":")[0]
+    """C ou P, lu directement dans le symbole streamer."""
+    if not streamer_symbol:
+        return None
+    core = streamer_symbol.split(":")[0].strip()
+    # Convention 1 : standard OPRA / CME où C/P précède le strike, ex. .SPXW260729C7400 ou ./EWN26C7500
     for i in range(len(core) - 1, -1, -1):
         if core[i] in ("C", "P") and i + 1 < len(core) and core[i + 1].isdigit():
             return core[i]
+    # Convention 2 : C/P en suffixe après le strike, ex. .SPX7710C
+    if core.endswith("C"):
+        return "C"
+    if core.endswith("P"):
+        return "P"
     return None
 
 
 def strike_of(streamer_symbol: str) -> float | None:
-    """Strike lu dans le symbole streamer, pour l'affichage du Tape.
-
-    Même logique que `option_type_of` : on repère le C/P qui précède les
-    chiffres du strike, et on lit le nombre qui suit. Couvre les deux
-    conventions — `.SPXW260729C7400` (OPRA) -> 7400 et `./EWN26C7500:XCME`
-    (CME) -> 7500. Renvoie None si le format ne s'y prête pas plutôt que de
-    risquer un strike faux.
-    """
-    core = streamer_symbol.split(":")[0]
+    """Strike lu dans le symbole streamer, pour l'affichage du Tape."""
+    if not streamer_symbol:
+        return None
+    core = streamer_symbol.split(":")[0].strip()
     for i in range(len(core) - 1, -1, -1):
         if core[i] in ("C", "P") and i + 1 < len(core) and core[i + 1].isdigit():
             reste = core[i + 1:]
             try:
                 return float(reste)
             except ValueError:
-                return None
+                pass
+    if core.endswith("C") or core.endswith("P"):
+        sub = core[:-1]
+        digits = ""
+        for ch in reversed(sub):
+            if ch.isdigit() or ch == ".":
+                digits = ch + digits
+            else:
+                break
+        if digits:
+            try:
+                return float(digits)
+            except ValueError:
+                pass
     return None
 
 
@@ -233,12 +241,15 @@ def build_index_universe(symbol: str, spot: float, access_token: str,
 
 
 def build_future_universe(code: str, spot: float, access_token: str,
-                          window: float = STRIKE_WINDOW,
-                          max_days: int = 5) -> list[str]:
-    """Symboles streamer à suivre pour une option sur future (NQ, ES)."""
-    from .futopt import fetch_chain_instruments, filter_chain
+                          window: float | None = None,
+                          max_days: int | None = None) -> list[str]:
+    """Symboles streamer à suivre pour une option sur future (NQ, ES, GC, BTC)."""
+    from .futopt import fetch_chain_instruments, filter_chain, PRODUCT_PARAMS
+    default_w, default_d = PRODUCT_PARAMS.get(code, (STRIKE_WINDOW, 14))
+    eff_w = window if window is not None else default_w
+    eff_d = max_days if max_days is not None else default_d
     chain = fetch_chain_instruments(code, access_token)
-    chain = filter_chain(chain, spot, window, max_days)
+    chain = filter_chain(chain, spot, eff_w, eff_d)
     return chain["streamer_symbol"].tolist() if not chain.empty else []
 
 
@@ -507,42 +518,9 @@ class FlowTape:
         self._started = True
         self._state = "connected"
         threading.Thread(target=self._run, name="flowtape", daemon=True).start()
-        threading.Thread(target=self._live_pulse_loop, name="flowtape_pulse", daemon=True).start()
 
-    def _live_pulse_loop(self) -> None:
-        """Générateur de ticks live en continu pour animer l'Order Flow et le Tape en temps réel."""
-        import random
-        symbols = ["SPX", "NDX", "SPY", "QQQ", "ES", "NQ"]
-        while True:
-            try:
-                time.sleep(1.0)
-                now = time.time()
-                for sym in symbols:
-                    spot = QUOTES.price(sym) or self._spot.get(sym) or (7708.0 if sym == "SPX" else 29426.0 if sym == "NDX" else 770.0 if sym == "SPY" else 719.0 if sym == "QQQ" else 7738.0 if sym == "ES" else 29657.0)
-                    step = 5.0 if sym in ("SPX", "ES") else 25.0 if sym in ("NDX", "NQ") else 1.0
-                    strike = round(spot / step) * step + random.choice([-step, 0.0, step])
-                    typ = random.choice(["C", "P"])
-                    side = random.choice(["BUY", "BUY", "SELL"])
-                    size = random.choice([2, 5, 10, 20, 50, 100])
-                    stream = f".{sym}{strike:.0f}{typ}"
-                    
-                    with self.lock:
-                        self._by_stream[stream] = sym
-                        self._spot[sym] = spot
-                        self._delta[stream] = 0.52 if typ == "C" else -0.48
-                        self._gamma[stream] = 0.0015
-                    
-                    price = round(spot * 0.004 + random.uniform(1.0, 8.0), 2)
-                    item = {
-                        "eventSymbol": stream,
-                        "price": price,
-                        "size": size,
-                        "aggressorSide": side,
-                        "spreadLeg": False,
-                    }
-                    self.ingest_print(item, now)
-            except Exception:
-                pass
+
+
 
     def _build_universe(self) -> dict[str, str]:
         """streamer -> sous-jacent, pour tous les marchés suivis.

@@ -75,13 +75,11 @@ UNDERLYINGS: dict[str, Underlying] = {
 
         # Options sur future, lues nativement (gex/futopt.py) plutôt que
         # transposées depuis NDX/SPX : la structure de gamma propre au marché
-        # des futures diverge de celle de l'indice cash — confirmé le
-        # 2026-07-27, écart de 160 pts sur le Zero Gamma NQ en transposé
-        # contre 12 pts en natif face à une source tierce. `cboe_symbol` est
-        # un placeholder ignoré : ces deux cibles ne passent jamais par la
-        # boucle CBOE (source="futopt").
+        # des futures diverge de celle de l'indice cash.
         Underlying("NQ", "NQ", "NQ", family="ND", source="futopt"),
         Underlying("ES", "ES", "ES", family="SP", source="futopt"),
+        Underlying("GC", "GC", "GC (XAUUSD / Gold)", family="CM", source="futopt"),
+        Underlying("BTC", "BTC", "BTC (BTCUSDT / Bitcoin)", family="CR", source="futopt"),
 
         # --- Constituants (Blind Spots) -------------------------------------
         # Leurs murs de gamma n'ont d'intérêt que projetés sur l'indice qu'ils
@@ -113,6 +111,11 @@ UNDERLYINGS: dict[str, Underlying] = {
 def targets() -> list[Underlying]:
     """Sous-jacents analysés — ceux que l'interface propose."""
     return [u for u in UNDERLYINGS.values() if u.enabled and u.role == "target"]
+
+
+def all_targets() -> list[Underlying]:
+    """Tous les sous-jacents disponibles dans l'interface (indices, ETF, futures, actions)."""
+    return [u for u in UNDERLYINGS.values() if u.enabled and u.role != "context"]
 
 
 def constituents(for_target: str | None = None) -> list[Underlying]:

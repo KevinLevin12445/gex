@@ -58,7 +58,7 @@ log = logging.getLogger(__name__)
 
 # Les deux futures suivis. La valeur EST le libellé de stockage (data/ticks/NQ),
 # la clé de résolution dans resolve_symbols -> symbole streamer (/NQU26:XCME).
-TRACKED_FUTURES: tuple[str, ...] = ("NQ", "ES")
+TRACKED_FUTURES: tuple[str, ...] = ("NQ", "ES", "GC", "BTC")
 
 # La session se recycle (reconnexion + reconstruction d'univers) à ce rythme :
 # suffisant pour rattraper un roll de contrat le jour dit et repartir sur une

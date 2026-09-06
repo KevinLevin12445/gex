@@ -90,26 +90,19 @@ def _env(name: str) -> str | None:
     return val
 
 
-def _is_valid_credential(val: str | None) -> bool:
-    if not val:
+def _is_real_val(v: str | None) -> bool:
+    if not v:
         return False
-    val = val.strip()
-    if val in ("pega_aqui_tu_token_dxfeed", "tu_token_de_dxfeed", "pega_aqui_tu_tt_refresh",
-               "pega_aqui_tu_client_id", "pega_aqui_tu_client_secret", "pega_aqui_tu_databento_key",
-               "db-tu_clave_databento", "tu_refresh_token", "tu_client_id", "tu_client_secret",
-               "your_token", "your_client_id", "your_client_secret", "your_refresh_token"):
-        return False
-    if val.startswith("pega_aqui") or val.startswith("tu_") or val.startswith("your_") or "<" in val or ">" in val:
-        return False
-    return len(val) > 5
+    v_low = v.strip().lower()
+    return not (v_low.startswith("pega_aqui") or v_low.startswith("tu_") or v_low.startswith("your_") or "xxxx" in v_low)
 
 
 def credentials_present() -> bool:
-    dx_token = _env("DXFEED_AUTH_TOKEN")
-    if _is_valid_credential(dx_token):
+    if _is_real_val(_env("DXFEED_AUTH_TOKEN")):
         return True
-    return all(_is_valid_credential(_env(n)) for n in
-               ("TT_REFRESH", "TASTYTRADE_CLIENT_ID", "TASTYTRADE_CLIENT_SECRET"))
+    has_cid = _is_real_val(_env("TASTYTRADE_CLIENT_ID"))
+    has_sec = _is_real_val(_env("TASTYTRADE_CLIENT_SECRET"))
+    return has_cid and has_sec
 
 
 # Champs demandés à FEED_SETUP, DANS CET ORDRE — cf. quote-streamer.ts du SDK
@@ -232,7 +225,8 @@ def resolve_symbols(access: str) -> dict[str, str]:
     out = {u.key: u.key for u in UNDERLYINGS.values()
            if u.enabled and not _is_future_key(u.key)}
     h = {"Authorization": f"Bearer {access}"}
-    for code in {u.future for u in UNDERLYINGS.values() if u.future and u.enabled}:
+    future_codes = {u.future for u in UNDERLYINGS.values() if u.future and u.enabled} | {u.key for u in UNDERLYINGS.values() if u.source == "futopt" and u.enabled}
+    for code in future_codes:
         cached = _FUTURE_STREAM_CACHE.get(code)
         if cached:
             out[code] = cached
@@ -315,89 +309,14 @@ class RealtimeQuotes:
     def start(self) -> None:
         if self._started:
             return
+        if not credentials_present():
+            log.info("Spot temps réel désactivé (identifiants tastytrade absents)")
+            self._state = "off"
+            return
         self._started = True
         self._state = "connecting"
-        if credentials_present():
-            threading.Thread(target=self._run, name="rtquote", daemon=True).start()
-            log.info("Spot temps réel : démarrage du flux dxFeed")
-        threading.Thread(target=self._run_live_feed, name="rtquote-livefeed", daemon=True).start()
-        log.info("Spot temps réel : moteur de cotations en direct démarré")
-
-    def _run_live_feed(self) -> None:
-        """Boucle de polling haute fréquence en continu sur les cours de marché (indices & futures).
-        Fournit le spot en temps réel même sans compte courtier payant, et sert de relais continu.
-        """
-        import concurrent.futures
-
-        sess = requests.Session()
-        sess.headers.update({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
-        
-        feed_symbols = {
-            "SPX": "^GSPC",
-            "NDX": "^NDX",
-            "SPY": "SPY",
-            "QQQ": "QQQ",
-            "ES": "ES=F",
-            "NQ": "NQ=F",
-            "IWM": "IWM",
-            "VIX": "^VIX",
-            "DIA": "DIA",
-        }
-        for u in UNDERLYINGS.values():
-            if u.key not in feed_symbols and u.enabled:
-                feed_symbols[u.key] = u.key
-
-        def fetch_ticker(item):
-            k, sym = item
-            for host in ("query1.finance.yahoo.com", "query2.finance.yahoo.com"):
-                try:
-                    url = f"https://{host}/v8/finance/chart/{sym}?interval=1m&range=1d"
-                    r = sess.get(url, timeout=2.5)
-                    if r.status_code == 200:
-                        meta = r.json().get("chart", {}).get("result", [{}])[0].get("meta", {})
-                        px = meta.get("regularMarketPrice") or meta.get("chartPreviousClose")
-                        if isinstance(px, (int, float)) and px == px and px > 0:
-                            bid = meta.get("bid") or px
-                            ask = meta.get("ask") or px
-                            return k, float(px), float(bid), float(ask)
-                except Exception:
-                    pass
-            return k, None, None, None
-
-        while True:
-            now = time.time()
-            minute = int(now // 60) * 60
-            try:
-                with concurrent.futures.ThreadPoolExecutor(max_workers=min(10, len(feed_symbols))) as executor:
-                    results = list(executor.map(fetch_ticker, feed_symbols.items()))
-                
-                got_any = False
-                with self.lock:
-                    for k, px, bid, ask in results:
-                        if px is not None:
-                            got_any = True
-                            t = self.ticks.setdefault(k, Tick())
-                            t.bid = bid
-                            t.ask = ask
-                            t.last = px
-                            t.ts = now
-                            self._accumulate(k, px, minute)
-                            # synchroniser également avec PUBLIC_QUOTES si besoin
-                            if k in ("NQ", "ES"):
-                                with PUBLIC_QUOTES.lock:
-                                    pt = PUBLIC_QUOTES.ticks.setdefault(k, Tick())
-                                    pt.bid = bid
-                                    pt.ask = ask
-                                    pt.last = px
-                                    pt.ts = now
-                                    PUBLIC_QUOTES._accumulate(k, px, minute)
-                
-                if got_any and self._state in ("off", "connecting", "disconnected"):
-                    self._state = "connected"
-                    self._detail = ""
-            except Exception as exc:
-                log.debug("Live feed polling error: %s", exc)
-            time.sleep(1.0)
+        threading.Thread(target=self._run, name="rtquote", daemon=True).start()
+        log.info("Spot temps réel : démarrage du flux dxFeed")
 
     # ---------------------------------------------------------------- lecture
     def price(self, key: str) -> float | None:

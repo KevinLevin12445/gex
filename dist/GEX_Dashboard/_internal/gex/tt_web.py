@@ -46,16 +46,24 @@ _MAX_PENDING = 8
 def _page(titre: str, message: str, ok: bool) -> str:
     """Page de retour minimale, aux couleurs du dashboard."""
     couleur = "#22c55e" if ok else "#ef4444"
-    return f"""<!doctype html><html lang="fr"><head><meta charset="utf-8">
+    redirect_tag = '<meta http-equiv="refresh" content="3;url=/">' if ok else ''
+    redirect_msg = '<p style="font-size:0.85rem;color:#898781;margin-top:1rem">Redirigiendo automáticamente al dashboard en 3 segundos...</p>' if ok else ''
+    return f"""<!doctype html><html lang="es"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+{redirect_tag}
 <title>{titre}</title></head>
-<body style="background:#0d0d0d;color:#e5e5e5;font-family:system-ui,sans-serif;
+<body style="background:#0d0d0d;color:#e5e5e5;font-family:system-ui,-apple-system,sans-serif;
              display:flex;align-items:center;justify-content:center;
-             height:100vh;margin:0">
-  <div style="max-width:34rem;padding:2rem;border-left:3px solid {couleur};
-              background:#151515">
-    <h1 style="margin:0 0 .6rem;font-size:1.1rem;color:{couleur}">{titre}</h1>
-    <p style="margin:0 0 1.2rem;line-height:1.5">{message}</p>
-    <a href="/" style="color:#22d3ee">Retour au dashboard</a>
+             min-height:100vh;margin:0;padding:1rem;box-sizing:border-box">
+  <div style="max-width:32rem;width:100%;padding:2.2rem;border-radius:8px;border:1px solid #2c2c2a;border-left:4px solid {couleur};
+              background:#151515;box-shadow:0 16px 40px rgba(0,0,0,0.7)">
+    <div style="display:flex;align-items:center;gap:0.75rem;margin-bottom:0.8rem">
+      <span style="font-size:1.4rem">{'✅' if ok else '❌'}</span>
+      <h1 style="margin:0;font-size:1.25rem;font-weight:600;color:{couleur}">{titre}</h1>
+    </div>
+    <p style="margin:0 0 1.5rem;line-height:1.6;color:#c3c2b7;font-size:0.95rem">{message}</p>
+    <a href="/" style="display:inline-block;padding:0.6rem 1.2rem;background:#2563eb;color:#ffffff;text-decoration:none;border-radius:6px;font-weight:500;font-size:0.9rem;transition:background 0.2s">Volver al Dashboard</a>
+    {redirect_msg}
   </div>
 </body></html>"""
 
@@ -66,8 +74,6 @@ def _remember_state() -> str:
     state = secrets.token_urlsafe(24)
     with _PENDING_LOCK:
         if len(_PENDING) >= _MAX_PENDING:
-            # purge le plus ancien : une tentative abandonnée ne doit pas
-            # bloquer les suivantes
             plus_vieux = min(_PENDING, key=_PENDING.get)
             _PENDING.pop(plus_vieux, None)
         _PENDING[state] = time.time()
@@ -84,42 +90,82 @@ def _consume_state(state: str | None) -> bool:
 
 
 def connection_status() -> tuple[str, str]:
-    """(état, message) de la connexion courtier, pour l'affichage.
+    """(état, message) de la connexion courtier, pour l'affichage."""
+    from .rtquote import _env, _is_real_val
 
-    `credentials_present` exige les trois valeurs : sans identifiants d'appli,
-    il n'y a même pas de quoi lancer une autorisation — le message doit dire
-    laquelle manque plutôt qu'un « non connecté » indifférencié.
-    """
-    from .rtquote import _env
+    if _is_real_val(_env("DXFEED_AUTH_TOKEN")):
+        return "connecte", "Token direct dxFeed actif (temps réel)."
 
     cid = _env("TASTYTRADE_CLIENT_ID")
     secret = _env("TASTYTRADE_CLIENT_SECRET")
     refresh = _env("TT_REFRESH")
-    if not cid or not secret:
-        return "absent", ("Identifiants d'application manquants "
-                          "(TASTYTRADE_CLIENT_ID / _SECRET).")
-    if not refresh:
-        return "deconnecte", "Application configurée — reste à autoriser l'accès."
-    return "connecte", "Compte tastytrade connecté (lecture seule)."
+
+    if not _is_real_val(cid) or not _is_real_val(secret):
+        return "absent", "Sin credenciales (introduce Client ID y Client Secret para activar tiempo real)."
+    if not _is_real_val(refresh):
+        return "deconnecte", "Credenciales guardadas — pendiente autorizar conexión con Tastytrade."
+    return "connecte", "Cuenta Tastytrade conectada (Tiempo real activo en todas las herramientas)."
 
 
 def register_oauth(app) -> None:
-    """`app` : instance Dash (on grimpe à `.server`) ou Flask directement —
-    comme `api.register_api`, pour que les tests n'aient pas à monter tout le
-    dashboard."""
+    """`app` : instance Dash (on grimpe à `.server`) ou Flask directement."""
     server: Flask = app.server if hasattr(app, "server") else app
+    from flask import jsonify
+
+    @server.route("/api/v1/tastytrade/status")
+    def _api_status():
+        from .rtquote import _env, _is_real_val
+        etat, msg = connection_status()
+        cid = _env("TASTYTRADE_CLIENT_ID") or ""
+        masked_cid = f"{cid[:4]}...{cid[-4:]}" if len(cid) > 8 else ("***" if cid else "")
+        return jsonify({
+            "status": etat,
+            "message": msg,
+            "client_id": masked_cid,
+            "has_secret": _is_real_val(_env("TASTYTRADE_CLIENT_SECRET")),
+            "has_refresh": _is_real_val(_env("TT_REFRESH")),
+            "credentials_present": credentials_present(),
+        })
+
+    @server.route("/api/v1/tastytrade/save", methods=["POST"])
+    def _api_save():
+        data = request.get_json(silent=True) or request.form
+        cid = (data.get("client_id") or "").strip()
+        secret = (data.get("client_secret") or "").strip()
+        refresh = (data.get("refresh_token") or "").strip() or None
+
+        if not cid or not secret:
+            return jsonify({"ok": False, "error": "Client ID y Client Secret son obligatorios."}), 400
+
+        tt_auth.save_credentials(cid, secret, refresh)
+        if refresh:
+            _demarrer_les_flux()
+
+        etat, msg = connection_status()
+        return jsonify({"ok": True, "status": etat, "message": msg, "credentials_present": credentials_present()})
+
+    @server.route("/api/v1/tastytrade/disconnect", methods=["POST"])
+    def _api_disconnect():
+        tt_auth.clear_credentials()
+        etat, msg = connection_status()
+        return jsonify({"ok": True, "status": etat, "message": msg})
 
     @server.route("/oauth/start")
     def _oauth_start():
         from .rtquote import _env
 
+        # Permet aussi de passer client_id et client_secret directement en paramètres
+        req_cid = request.args.get("client_id")
+        req_sec = request.args.get("client_secret")
+        if req_cid and req_sec:
+            tt_auth.save_credentials(req_cid, req_sec)
+
         cid = _env("TASTYTRADE_CLIENT_ID")
         if not cid:
-            return _page("Configuration incomplète",
-                         "TASTYTRADE_CLIENT_ID est introuvable. Crée une "
-                         "application OAuth chez tastytrade "
-                         "(Manage → My Profile → API), puis renseigne "
-                         "TASTYTRADE_CLIENT_ID et TASTYTRADE_CLIENT_SECRET.",
+            return _page("Configuración incompleta",
+                         "TASTYTRADE_CLIENT_ID no encontrado. Ingresa tu "
+                         "Client ID y Client Secret en el modal de configuración "
+                         "del Dashboard.",
                          ok=False), 400
         return redirect(tt_auth.authorize_url(cid, state=_remember_state()))
 
@@ -127,50 +173,49 @@ def register_oauth(app) -> None:
     def _oauth_callback():
         erreur = request.args.get("error")
         if erreur:
-            # refus explicite côté tastytrade : ce n'est pas une panne
-            return _page("Autorisation refusée",
-                         f"tastytrade a renvoyé : {erreur}. "
-                         "Rien n'a été enregistré.", ok=False), 400
+            return _page("Autorización rechazada / Refusée",
+                         f"Tastytrade respondió: {erreur} (refus). "
+                         "No se guardó ninguna credencial.", ok=False), 400
 
         if not _consume_state(request.args.get("state")):
             log.warning("OAuth : state invalide ou expiré, échange refusé")
-            return _page("Demande non reconnue",
-                         "Cette autorisation ne correspond à aucune demande "
-                         "partie de ce dashboard. Par sécurité, rien n'a été "
-                         "enregistré — relance depuis le bouton Connecter.",
+            return _page("Solicitud no reconocida",
+                         "Esta autorización no corresponde a ninguna solicitud "
+                         "iniciada desde este dashboard o ha caducado. "
+                         "Por seguridad, inténtalo de nuevo.",
                          ok=False), 400
 
         code = request.args.get("code")
         if not code:
-            return _page("Code absent",
-                         "tastytrade n'a pas renvoyé de code d'autorisation.",
+            return _page("Código ausente",
+                         "Tastytrade no devolvió el código de autorización.",
                          ok=False), 400
 
         try:
             cid, secret = tt_auth.credentials()
             data = tt_auth.exchange_code(cid, secret, code)
-        except SystemExit as exc:      # tt_auth signale ses échecs ainsi
+        except SystemExit as exc:
             log.warning("OAuth : échange refusé (%s)", exc)
-            return _page("Échange refusé", str(exc), ok=False), 400
-        except Exception:              # noqa: BLE001 — réseau, JSON malformé…
+            return _page("Intercambio rechazado", str(exc), ok=False), 400
+        except Exception:
             log.exception("OAuth : échec de l'échange du code")
-            return _page("Échec de l'échange",
-                         "Impossible de contacter tastytrade. "
-                         "Vérifie la connexion et réessaie.", ok=False), 502
+            return _page("Error de conexión",
+                         "No fue posible contactar a los servidores de Tastytrade. "
+                         "Verifica tu conexión a internet y vuelve a intentar.", ok=False), 502
 
         refresh = data.get("refresh_token")
         if not refresh:
-            return _page("Réponse inattendue",
-                         "Aucun refresh_token dans la réponse de tastytrade.",
+            return _page("Respuesta inesperada",
+                         "No se encontró el refresh_token en la respuesta de Tastytrade.",
                          ok=False), 502
 
         note = tt_auth.store_refresh(refresh)
-        # le jeton lui-même n'est JAMAIS journalisé
         log.info("OAuth tastytrade : connexion réussie. %s", note)
         _demarrer_les_flux()
-        return _page("Connecté à tastytrade",
-                     f"{note} Les flux temps réel démarrent — les données "
-                     "apparaîtront dans la minute.", ok=True)
+        return _page("¡Conectado a Tastytrade con éxito!",
+                     "Tus credenciales han sido verificadas y guardadas. "
+                     "Los flujos de datos en tiempo real (Spot, Order Flow / Tape, "
+                     "cadenas nativas NQ/ES y tick capture) se han iniciado automáticamente.", ok=True)
 
 
 def _demarrer_les_flux() -> None:
