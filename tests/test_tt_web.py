@@ -183,3 +183,36 @@ def test_apply_user_zoom_sans_interaction_ne_touche_rien():
     _apply_user_zoom(lay, None)
     assert lay["yaxis"] == {"title": "x"}
     assert lay["xaxis"]["range"] == [0, 1]
+
+
+def test_api_tastytrade_save_et_status(client, monkeypatch):
+    monkeypatch.setattr("gex.tt_web._demarrer_les_flux", lambda: None)
+    _identifiants(monkeypatch, cid="test_id", secret="test_sec", refresh=None)
+    monkeypatch.setattr(tt_auth, "save_credentials", lambda *a: None)
+    monkeypatch.setattr(tt_auth, "clear_credentials", lambda: None)
+
+    # Sauvegarde ID et Secret sans refresh
+    r = client.post("/api/v1/tastytrade/save", json={"client_id": "test_id", "client_secret": "test_sec"})
+    assert r.status_code == 200
+    data = r.get_json()
+    assert data["ok"] is True
+    assert data["status"] == "deconnecte"
+
+    # Vérifie le status
+    r_stat = client.get("/api/v1/tastytrade/status")
+    assert r_stat.status_code == 200
+    st = r_stat.get_json()
+    assert st["status"] == "deconnecte"
+    assert st["has_secret"] is True
+    assert st["has_refresh"] is False
+
+    # Déconnexion
+    _identifiants(monkeypatch, cid=None, secret=None, refresh=None)
+    r_disc = client.post("/api/v1/tastytrade/disconnect")
+    assert r_disc.status_code == 200
+    assert r_disc.get_json()["ok"] is True
+
+    # Nouveau status après déconnexion
+    r_stat2 = client.get("/api/v1/tastytrade/status")
+    assert r_stat2.get_json()["status"] == "absent"
+

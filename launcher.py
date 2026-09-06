@@ -12,7 +12,14 @@ from pathlib import Path
 
 # Ajustar directorio base si se ejecuta congelado en PyInstaller
 if getattr(sys, "frozen", False):
-    base_dir = Path(sys.executable).parent
+    exe_dir = Path(sys.executable).resolve().parent
+    # Si el ejecutable está en dist/GEX_Dashboard/ o dist/ dentro del repositorio
+    if (exe_dir.parent.parent / "pyproject.toml").exists() and (exe_dir.parent.parent / "data").exists():
+        base_dir = exe_dir.parent.parent
+    elif (exe_dir.parent / "pyproject.toml").exists() and (exe_dir.parent / "data").exists():
+        base_dir = exe_dir.parent
+    else:
+        base_dir = exe_dir
     os.chdir(base_dir)
 
 from dotenv import load_dotenv

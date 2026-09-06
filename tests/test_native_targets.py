@@ -101,14 +101,14 @@ def test_pull_native_options_cache_frais_evite_la_collecte_live(tmp_path, monkey
 
     now = datetime.now(ET)
     fresh_ts = now - timedelta(seconds=60)
-    store.save_snapshot("NQ", _native_chain(), fresh_ts)
-    store.save_snapshot("ES", _native_chain(), fresh_ts)
+    for c in ("NQ", "ES", "GC", "BTC"):
+        store.save_snapshot(c, _native_chain(), fresh_ts)
 
     scheduler.pull_native_options()
 
     assert called == []  # aucune collecte live déclenchée pour l'un ou l'autre
-    assert scheduler.STATE.get("NQ").summary is not None
-    assert scheduler.STATE.get("ES").summary is not None
+    for c in ("NQ", "ES", "GC", "BTC"):
+        assert scheduler.STATE.get(c).summary is not None
 
 
 def test_pull_native_options_cache_perime_relance_la_collecte(tmp_path, monkeypatch):
@@ -128,9 +128,9 @@ def test_pull_native_options_cache_perime_relance_la_collecte(tmp_path, monkeypa
     monkeypatch.setattr(scheduler.futopt, "build_native_chain", _fake_build)
 
     stale_ts = datetime.now(ET) - timedelta(seconds=scheduler.NATIVE_CACHE_FRESH_S + 60)
-    store.save_snapshot("NQ", _native_chain(), stale_ts)
-    store.save_snapshot("ES", _native_chain(), stale_ts)
+    for c in ("NQ", "ES", "GC", "BTC"):
+        store.save_snapshot(c, _native_chain(), stale_ts)
 
     scheduler.pull_native_options()
 
-    assert called == ["NQ", "ES"]
+    assert called == ["NQ", "ES", "GC", "BTC"]

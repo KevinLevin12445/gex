@@ -1,6 +1,6 @@
 # FAQ — Preguntas Frecuentes
 
-*[Version française](FAQ.fr.md)* · *[English version](FAQ.en.md)*
+*[Version française](FAQ.md)* · *[English version](FAQ.en.md)*
 
 Todo lo que necesitas saber para entender los datos mostrados y ejecutar
 tu propia instancia.
@@ -95,9 +95,6 @@ Luego, según el sistema:
 .venv\Scripts\python run.py       # Windows
 .venv/bin/python run.py           # macOS / Linux
 ```
-
-O directamente haciendo doble clic en:
-`dist\GEX_Dashboard\GEX_Dashboard.exe`
 
 Luego abrir **http://127.0.0.1:8050** en un navegador.
 

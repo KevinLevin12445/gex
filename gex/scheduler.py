@@ -278,7 +278,8 @@ def pull_native_options() -> None:
     """
     if not credentials_present():
         return
-    for code in ("NQ", "ES"):
+    native_codes = [u.key for u in UNDERLYINGS.values() if u.source == "futopt" and u.enabled]
+    for code in native_codes:
         cached = store.load_latest_snapshot(code)
         if cached is not None:
             df_cached, ts = cached
@@ -479,7 +480,7 @@ def start_scheduler() -> BackgroundScheduler:
 
 def prime_state_from_disk() -> None:
     """Précharge STATE au démarrage depuis le dernier snapshot disque pour chaque sous-jacent."""
-    for sym in ("SPX", "NDX", "SPY", "QQQ", "NQ", "ES", *UNDERLYINGS):
+    for sym in ("SPX", "NDX", "SPY", "QQQ", "NQ", "ES", "GC", "BTC", *UNDERLYINGS):
         try:
             res = store.load_latest_snapshot(sym)
             if res is None and sym in ("NQ", "ES"):

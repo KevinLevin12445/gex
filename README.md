@@ -1,288 +1,289 @@
-# GEX Dashboard — analyse Gamma/Delta Exposure (SPX, NDX, SPY, QQQ)
+# GEX Dashboard — Análisis de Gamma/Delta Exposure (SPX, NDX, SPY, QQQ, GC, BTC)
 
-*[English version](README.en.md)* · *[FAQ](FAQ.md)* · *[Avertissement](DISCLAIMER.md)*
+*[English version](README.en.md)* · *[Version française](README.fr.md)* · *[FAQ](FAQ.md)* · *[Aviso Legal](DISCLAIMER.md)*
 
-[![Tests](https://github.com/Darthreign/gex-dashboard/actions/workflows/tests.yml/badge.svg)](https://github.com/Darthreign/gex-dashboard/actions/workflows/tests.yml)
+[Licencia MIT](LICENSE) — herramienta de **análisis únicamente**: sin trading,
+sin ejecución, sin asesoramiento de inversión. Cada instancia obtiene sus
+propios datos desde el endpoint público delayed de CBOE; este proyecto no
+redistribuye ningún dato de mercado.
 
-[Licence MIT](LICENSE) — outil d'**analyse uniquement** : pas de trading,
-pas d'exécution, pas de conseil en investissement. Chaque instance tire ses
-propres données depuis l'endpoint delayed public de CBOE ; ce projet ne
-rediffuse aucune donnée de marché.
+> ⚠️ **El trading de opciones y derivados conlleva un alto riesgo de pérdida.**
+> Esta herramienta se proporciona con fines educativos, sin garantía, y no
+> constituye asesoramiento de inversión. Lea el [aviso legal completo](DISCLAIMER.md)
+> antes de utilizarla.
 
-> ⚠️ **Le trading d'options et de dérivés comporte un risque élevé de perte.**
-> Cet outil est fourni à titre éducatif, sans garantie, et ne constitue pas un
-> conseil en investissement. Lisez l'[avertissement complet](DISCLAIMER.md)
-> avant toute utilisation.
+## Vista General
 
-## Aperçu
-
-| Vue principale | Gamma Profile |
+| Vista principal | Gamma Profile |
 |---|---|
-| ![Vue principale](docs/screenshots/01-vue-principale.png) | ![Gamma Profile](docs/screenshots/02-gamma-profile.png) |
-| GEX/DEX par strike, niveaux 0DTE, flux delta, historique | Profil de GEX net selon le spot, décomposé par échéance |
+| ![Vista principal](docs/screenshots/01-vue-principale.png) | ![Gamma Profile](docs/screenshots/02-gamma-profile.png) |
+| GEX/DEX por strike, niveles 0DTE, flujo delta, historial | Perfil de GEX neto según el spot, descompuesto por vencimiento |
 
-| Vanna & Charm | Positionnement |
+| Vanna & Charm | Posicionamiento |
 |---|---|
-| ![Vanna et Charm](docs/screenshots/03-vanna-charm.png) | ![Positionnement](docs/screenshots/04-positionnement.png) |
-| Grecques de second ordre par strike | Variation d'open interest entre séances |
+| ![Vanna y Charm](docs/screenshots/03-vanna-charm.png) | ![Posicionamiento](docs/screenshots/04-positionnement.png) |
+| Griegas de segundo orden por strike | Variación de open interest entre sesiones |
 
-Dashboard **d'analyse uniquement** (pas de trading) qui reconstruit les métriques
-de structure de marché façon SpotGamma à partir des chaînes d'options CBOE :
-Gamma Exposure par strike, Delta Exposure, GEX net, niveau Zero Gamma,
-put/call ratios, skew IV, et proxy de flux delta intraday.
+Dashboard de **análisis únicamente** (sin trading) que reconstruye las métricas
+de estructura de mercado al estilo SpotGamma a partir de las cadenas de opciones CBOE:
+Gamma Exposure por strike, Delta Exposure, GEX neto, nivel Zero Gamma,
+ratios put/call, skew IV, y proxy de flujo delta intradía.
 
-**Envie de comprendre ce que chaque onglet et chaque chiffre affichent ?** →
-[Guide illustré](docs/guide/README.md), un fichier par onglet plus un fichier
-qui explique chaque nombre, pensé pour quelqu'un qui découvre le dashboard
-sans rien connaître aux options.
+**¿Quieres entender qué muestra cada pestaña y cada cifra?** →
+[Guía ilustrada](docs/guide/README.md), un archivo por pestaña más un archivo
+que explica cada número, pensado para alguien que descubre el dashboard
+sin conocer nada sobre opciones.
 
-## Sources de données
+## Fuentes de Datos
 
-Le dashboard applique **une règle unique, partout** : la source temps réel si
-elle est disponible, la source gratuite sinon.
+El dashboard aplica **una regla única, en todas partes**: la fuente en tiempo real si
+está disponible, la fuente gratuita en caso contrario.
 
-| | CBOE (public) | dxFeed (compte courtier) |
+| | CBOE (público) | dxFeed (cuenta de broker) |
 |---|---|---|
-| Compte requis | non | oui (gratuit avec le compte) |
-| Fraîcheur | **~15 min de retard** | temps réel |
-| Sens acheteur/vendeur | non observable | **fourni par la source** |
-| Redistribuable | oui | **non** — usage strictement personnel |
+| Cuenta requerida | no | sí (gratuita con la cuenta) |
+| Frescura | **~15 min de retraso** | tiempo real |
+| Lado comprador/vendedor | no observable | **proporcionado por la fuente** |
+| Redistribuible | sí | **no** — uso estrictamente personal |
 
-**Sans compte courtier, rien d'essentiel ne manque** : tous les niveaux, tous
-les régimes et tous les graphiques fonctionnent sur la source publique. Seuls
-l'order flow signé et les bougies minute sur futures nécessitent un compte.
+**Sin cuenta de broker, no falta nada esencial**: todos los niveles, todos
+los regímenes y todos los gráficos funcionan con la fuente pública. Solo
+el order flow firmado y las velas de minuto en futuros requieren una cuenta.
 
-### CBOE — source par défaut
+### CBOE — fuente por defecto
 
-Endpoint delayed public (non documenté officiellement) :
-`https://cdn.cboe.com/api/global/delayed_quotes/options/_SPX.json` (indices
-préfixés `_`). Un GET ramène la chaîne complète — bid/ask, IV, open interest,
-volume, Greeks — plus le spot. **Délai ~15 min à la source**, régénéré ~toutes
-les 60 s (timestamp du feed en UTC). Sous-jacents suivis : SPX, NDX, SPY et
-QQQ (`gex/config.py`).
+Endpoint público delayed (no documentado oficialmente):
+`https://cdn.cboe.com/api/global/delayed_quotes/options/_SPX.json` (índices
+con prefijo `_`). Un GET devuelve la cadena completa — bid/ask, IV, open interest,
+volumen, Greeks — más el spot. **Retraso ~15 min en la fuente**, regenerado ~cada
+60 s (timestamp del feed en UTC). Subyacentes seguidos: SPX, NDX, SPY,
+QQQ, GC (Oro) y BTC (Bitcoin) (`gex/config.py`).
 
-### dxFeed — quand un compte courtier est configuré
+### dxFeed — cuando una cuenta de broker está configurada
 
-Ce que le temps réel change, mesuré plutôt que supposé : sur les mêmes strikes
-0DTE, dxFeed voyait **3 à 6 fois plus de volume** que CBOE au même instant,
-pour un open interest **identique au contrat près**. Ce n'est pas une source
-plus approximative, c'est la même sans le retard.
+Lo que el tiempo real cambia, medido en lugar de supuesto: sobre los mismos strikes
+0DTE, dxFeed veía **3 a 6 veces más volumen** que CBOE en el mismo instante,
+para un open interest **idéntico al contrato**. No es una fuente más
+aproximada, es la misma sin el retraso.
 
-- **Chaînes natives** SPX / NDX / SPY / QQQ (`gex/idxopt.py`) et NQ / ES
-  (`gex/futopt.py`) — les options sur future ont leur propre structure de
-  gamma, distincte de l'indice transposé.
-- **Order flow signé** (`gex/flowtape.py`) : chaque transaction porte son côté
-  agresseur, donné par la source. Aucune heuristique de classification.
-- **Spot temps réel** et bougies 1 min pour la Heatmap.
+- **Cadenas nativas** SPX / NDX / SPY / QQQ (`gex/idxopt.py`) y NQ / ES / GC / BTC
+  (`gex/futopt.py`) — las opciones sobre futuros tienen su propia estructura de
+  gamma, distinta del índice transpuesto.
+- **Order flow firmado** (`gex/flowtape.py`): cada transacción lleva su lado
+  agresor, proporcionado por la fuente. Ninguna heurística de clasificación.
+- **Spot en tiempo real** y velas de 1 min para el Heatmap.
 
-⚠️ Ces données ne quittent jamais la machine : `gex/export.py` n'autorise à
-l'export que les lignes `source == "cboe"`.
+⚠️ Estos datos nunca salen de la máquina: `gex/export.py` solo autoriza la
+exportación de las líneas con `source == "cboe"`.
 
-## Installation
+## Instalación
 
-**Débutant, jamais installé ce genre d'outil ?** → suis le
-**[guide pas à pas illustré](INSTALL.md)** (15 min, aucune connaissance
-requise, sans ligne de commande à comprendre).
+**¿Principiante, nunca has instalado este tipo de herramienta?** → sigue la
+**[guía paso a paso ilustrada](INSTALL.md)** (15 min, sin conocimientos
+previos necesarios, sin líneas de comando que entender).
 
-Sinon, l'[installation assistée par Claude Code](#installation-assistée-claude-code)
-ou le [démarrage manuel](#démarrage) ci-dessous.
+De lo contrario, la [instalación asistida por Claude Code](#instalación-asistida-claude-code)
+o el [inicio manual](#inicio) más abajo.
 
-## Installation assistée (Claude Code)
+## Instalación Asistida (Claude Code)
 
-Si tu utilises [Claude Code](https://claude.com/claude-code), ouvre-le dans un
-dossier vide et colle ce prompt — il fait tout, y compris l'enregistrement du
-serveur MCP :
+Si usas [Claude Code](https://claude.com/claude-code), ábrelo en una
+carpeta vacía y pega este prompt — lo hace todo, incluyendo el registro del
+servidor MCP:
 
 ```
-Installe le dashboard GEX (analyse d'options SPX/NDX) sur ma machine.
+Instala el dashboard GEX (análisis de opciones SPX/NDX) en mi máquina.
 
-Dépôt : https://github.com/Darthreign/gex-dashboard
+Repositorio: https://github.com/KevinLevin12445/gex
 
-Étapes :
-1. Vérifie que Python 3.11+ et git sont disponibles. S'il en manque un,
-   explique-moi comment l'installer et arrête-toi là.
-2. Clone le dépôt dans le dossier courant et places-toi dedans.
-3. Crée un environnement virtuel .venv et installe requirements.txt.
-4. Lance la suite de tests (pytest tests/ -q) pour valider l'installation :
-   tous les tests doivent passer.
-5. Adapte .mcp.json à mon système : remplace la valeur de "command" par le
-   chemin ABSOLU vers le python du venv (Windows : .venv\Scripts\python.exe,
-   macOS/Linux : .venv/bin/python). Le fichier livré contient un chemin
-   Windows relatif qui ne fonctionne pas ailleurs.
-6. Démarre le dashboard (python run.py) et donne-moi l'URL à ouvrir.
-7. Explique-moi que je dois redémarrer Claude Code depuis ce dossier pour
-   activer le serveur MCP "gex-data", et liste les outils qu'il expose.
+Pasos:
+1. Verifica que Python 3.11+ y git estén disponibles. Si falta alguno,
+   explícame cómo instalarlo y detente ahí.
+2. Clona el repositorio en la carpeta actual y posiciónate en ella.
+3. Crea un entorno virtual .venv e instala requirements.txt.
+4. Ejecuta la suite de tests (pytest tests/ -q) para validar la instalación:
+   todos los tests deben pasar.
+5. Adapta .mcp.json a mi sistema: reemplaza el valor de "command" por la
+   ruta ABSOLUTA al python del venv (Windows: .venv\Scripts\python.exe,
+   macOS/Linux: .venv/bin/python). El archivo incluido contiene una ruta
+   Windows relativa que no funciona en otros sistemas.
+6. Inicia el dashboard (python run.py) y dame la URL para abrir.
+7. Explícame que debo reiniciar Claude Code desde esta carpeta para
+   activar el servidor MCP "gex-data", y lista las herramientas que expone.
 
-Important : aucun compte, aucune clé API ni abonnement n'est nécessaire — les
-données proviennent de l'endpoint public gratuit de CBOE. Ne me demande aucun
-identifiant. Les modules backfill.py (Databento) et tt_auth.py (tastytrade)
-sont optionnels et payants : ignore-les complètement.
+Importante: no se necesita ninguna cuenta, clave API ni suscripción — los
+datos provienen del endpoint público gratuito de CBOE. No me pidas ninguna
+credencial. Los módulos backfill.py (Databento) y tt_auth.py (tastytrade)
+son opcionales y de pago: ignóralos completamente.
 ```
 
-Le serveur MCP permet ensuite d'interroger tes données en langage naturel
-(« analyse la structure gamma actuelle », « où sont les murs sur NDX ? »).
+El servidor MCP permite luego consultar tus datos en lenguaje natural
+(«analiza la estructura gamma actual», «¿dónde están los muros en NDX?»).
 
-## Démarrage
+## Inicio
 
 ```
 python -m venv .venv
 .venv\Scripts\pip install -r requirements.txt
-.venv\Scripts\python run.py        # dashboard sur http://127.0.0.1:8050
+.venv\Scripts\python run.py        # dashboard en http://127.0.0.1:8050
 ```
 
-Tests : `.venv\Scripts\python -m pytest tests/`
+O simplemente ejecuta el archivo compilado incluido:
+`dist\GEX_Dashboard\GEX_Dashboard.exe`
 
-### Installation en package (optionnel)
+Tests: `.venv\Scripts\python -m pytest tests/`
 
-Le projet est un package Python standard. Installé, il expose deux commandes,
-sans avoir à se placer dans le dossier des sources :
+### Instalación como paquete (opcional)
 
-```
-pip install .                      # ou : pip install -e .  (mode développement)
-gex-dashboard                      # démarre le dashboard
-gex-mcp                            # démarre le serveur MCP
-```
-
-Une fois installé ainsi, `data/` et `logs/` sont créés **dans le dossier
-courant** (et non dans les sources) : lance la commande depuis le dossier où
-tu veux conserver ton historique.
-
-## Serveur MCP — interroger ses données en langage naturel
-
-C'est ce qui distingue vraiment cet outil d'un dashboard classique : une fois
-le serveur MCP actif, tu peux poser tes questions directement à Claude, qui
-lit tes fichiers Parquet et te répond sur **tes** données.
+El proyecto es un paquete Python estándar. Instalado, expone dos comandos,
+sin necesidad de estar en la carpeta de fuentes:
 
 ```
-« Où sont les murs de gamma sur NDX ? »
-« Analyse le régime gamma actuel sur SPX »
-« Comment le GEX net a-t-il évolué cette semaine ? »
-« Montre-moi le flux delta de la dernière séance »
+pip install .                      # o: pip install -e .  (modo desarrollo)
+gex-dashboard                      # inicia el dashboard
+gex-mcp                            # inicia el servidor MCP
 ```
 
-⚠️ **Le serveur MCP ne s'active qu'au démarrage de Claude Code, depuis le
-dossier du projet.** Si tu viens d'installer l'outil, ferme Claude Code et
-relance-le depuis ce dossier — sinon les commandes resteront invisibles.
-C'est l'unique étape qui déroute à l'installation.
+Una vez instalado así, `data/` y `logs/` se crean **en la carpeta
+actual** (y no en las fuentes): ejecuta el comando desde la carpeta donde
+quieras conservar tu historial.
 
-Le fichier [`.mcp.json`](.mcp.json) enregistre le serveur automatiquement.
-Il contient un chemin **Windows relatif** : sous macOS ou Linux, remplace la
-valeur de `command` par le chemin absolu vers `.venv/bin/python`, faute de
-quoi le serveur échoue sans message explicite.
+## Servidor MCP — consultar tus datos en lenguaje natural
 
-Outils exposés : `get_market_context` (synthèse : régime, murs les plus
-proches du spot, VIX), `get_gex_summary`, `get_gex_by_strike` (murs de gamma),
+Es lo que realmente distingue esta herramienta de un dashboard clásico: una vez
+activo el servidor MCP, puedes hacer tus preguntas directamente a Claude, que
+lee tus archivos Parquet y te responde sobre **tus** datos.
+
+```
+«¿Dónde están los muros de gamma en NDX?»
+«Analiza el régimen gamma actual en SPX»
+«¿Cómo ha evolucionado el GEX neto esta semana?»
+«Muéstrame el flujo delta de la última sesión»
+```
+
+⚠️ **El servidor MCP solo se activa al iniciar Claude Code, desde la
+carpeta del proyecto.** Si acabas de instalar la herramienta, cierra Claude Code y
+vuélvelo a abrir desde esta carpeta — de lo contrario los comandos permanecerán invisibles.
+Es el único paso que puede confundir en la instalación.
+
+El archivo [`.mcp.json`](.mcp.json) registra el servidor automáticamente.
+Contiene una ruta **Windows relativa**: en macOS o Linux, reemplaza el
+valor de `command` por la ruta absoluta a `.venv/bin/python`, de lo
+contrario el servidor fallará sin mensaje explícito.
+
+Herramientas expuestas: `get_market_context` (síntesis: régimen, muros más
+cercanos al spot, VIX), `get_gex_summary`, `get_gex_by_strike` (muros de gamma),
 `get_flow_delta`, `get_history`, `get_reports`, `get_log_tail`.
 
-Ces outils suivent la même règle de source que l'interface : ils répondent sur
-la chaîne native quand elle existe, sur CBOE sinon — pour éviter deux vérités
-différentes selon qu'on regarde l'écran ou qu'on interroge Claude.
+Estas herramientas siguen la misma regla de fuente que la interfaz: responden con
+la cadena nativa cuando existe, con CBOE si no — para evitar dos verdades
+diferentes según se mire la pantalla o se consulte a Claude.
 
-## Bot Discord — partager le verdict (optionnel)
+## Bot Discord — compartir el veredicto (opcional)
 
-Un composant séparé et léger ([`discord_bot/`](discord_bot/README.md)) relaie
-dans un salon Discord le **verdict** d'état du gamma. Des amis voient ta
-conclusion (« Gamma négatif sur le Nasdaq, contrarien risqué ») **sans compte
-courtier ni accès aux données brutes** : le bot n'interroge que l'API locale du
-dashboard (`/api/v1/digest`), qui ne renvoie que des analyses dérivées — jamais
-les chaînes d'options.
+Un componente separado y ligero ([`discord_bot/`](discord_bot/README.md)) transmite
+en un canal de Discord el **veredicto** del estado del gamma. Tus amigos ven tu
+conclusión («Gamma negativo en el Nasdaq, contrarian arriesgado») **sin cuenta
+de broker ni acceso a los datos brutos**: el bot solo consulta la API local del
+dashboard (`/api/v1/digest`), que solo devuelve análisis derivados — nunca
+las cadenas de opciones.
 
-- **Posts automatiques** à heures fixes (8h30 / 15h25 / 15h35 / 17h30 Paris) et
-  à chaque **changement de régime** en séance US. Silencieux le week-end.
-- **Verdict par famille** : le régime est jugé par classe d'actifs indépendante
-  — **S&P** (SPX/SPY/ES) et **Nasdaq** (NDX/QQQ/NQ) — et non symbole par
-  symbole, avec un poids plus fort à l'indice cash qu'à l'ETF puis au future.
-  Couleur : 🔴 2 familles négatives ou une en fort négatif · 🟠 1 famille
-  négative ou VIX élevé · 🟢 sinon. Une ligne de **confiance** reflète la
-  couverture des données.
-- **Commandes à la demande** : `!etat`/`!gamma` (digest), `!gamma NQ` (valeurs
-  calculées), `!niveaux NQ` (niveaux GEX, transposables : `!niveaux NDX NQ`),
-  n'importe quel graphique en image (`!heatmap NQ`, `!delta SPX`…) et `!help`.
+- **Posts automáticos** a horas fijas (8h30 / 15h25 / 15h35 / 17h30 París) y
+  en cada **cambio de régimen** durante la sesión US. Silencioso los fines de semana.
+- **Veredicto por familia**: el régimen se juzga por clase de activo independiente
+  — **S&P** (SPX/SPY/ES), **Nasdaq** (NDX/QQQ/NQ), **Commodities** (GC) y **Crypto** (BTC) — con un peso mayor al índice cash que al ETF y luego al futuro.
+  Color: 🔴 2 familias negativas o una en fuerte negativo · 🟠 1 familia
+  negativa o VIX elevado · 🟢 en caso contrario. Una línea de **confianza** refleja la
+  cobertura de los datos.
+- **Comandos bajo demanda**: `!estado`/`!gamma` (digest), `!gamma NQ` (valores
+  calculados), `!niveles NQ` (niveles GEX, transponibles: `!niveles NDX NQ`),
+  cualquier gráfico como imagen (`!heatmap NQ`, `!delta SPX`…) y `!help`.
 
-Le bot n'expose que des conclusions calculées : c'est ce qui permet de les
-partager sans rediffuser un flux sous licence personnelle. Mise en place dans le
-[README du bot](discord_bot/README.md).
+El bot solo expone conclusiones calculadas: es lo que permite compartirlas
+sin redistribuir un flujo bajo licencia personal. Configuración en el
+[README del bot](discord_bot/README.md).
 
-## Fonctionnalités
+## Funcionalidades
 
-- GEX / DEX par strike (fenêtre réglable ±2/4/10 %), calls/puts au survol
-- Niveaux 0DTE tracés : **GEX1-5** (murs de gamma), **Flip** (zero gamma,
-  pondéré open interest), **HVL** (bascule pondérée par le volume du jour)
-- GEX net, P/C ratios, skew IV par expiration, vue par échéance (0DTE/semaine/mois)
-- Flux delta 1 min (proxy Δvolume×δ) avec sélecteur de journée
-- Historique GEX net & spot vs zero gamma (s'accumule automatiquement)
-- Backfill historique optionnel via Databento (`gex/backfill.py`, payant,
-  devis affiché avant tout téléchargement)
-- **Order flow signé** sur options (compte courtier) : côté agresseur fourni
-  par la source, pondéré par le delta — une mesure d'impact de couverture, pas
-  un décompte de contrats. Jambes de combos isolées du flux net.
-- VIX en confluence, en direct si l'abonnement le permet, délayé sinon
-- Serveur MCP (`gex/mcp_server.py`) pour interroger les données depuis Claude
-- Bot Discord optionnel ([`discord_bot/`](discord_bot/README.md)) qui diffuse le
-  verdict d'état du gamma (analyses dérivées seulement) — voir plus haut
-- Titres de graphiques cliquables : chaque titre renvoie à la section du
-  [guide illustré](docs/guide/README.md) qui l'explique
+- GEX / DEX por strike (ventana ajustable ±2/4/10 %), calls/puts al pasar el cursor
+- Niveles 0DTE trazados: **GEX1-5** (muros de gamma), **Flip** (zero gamma,
+  ponderado por open interest), **HVL** (basculamiento ponderado por el volumen del día)
+- GEX neto, ratios P/C, skew IV por vencimiento, vista por plazo (0DTE/semanal/mensual)
+- Flujo delta 1 min (proxy Δvolumen×δ) con selector de día
+- Historial GEX neto & spot vs zero gamma (se acumula automáticamente)
+- Backfill histórico opcional vía Databento (`gex/backfill.py`, de pago,
+  presupuesto mostrado antes de cualquier descarga)
+- **Order flow firmado** en opciones (cuenta de broker): lado agresor proporcionado
+  por la fuente, ponderado por el delta — una medida de impacto de cobertura, no
+  un recuento de contratos. Piernas de combos aisladas del flujo neto.
+- VIX en confluencia, en directo si la suscripción lo permite, retrasado si no
+- Servidor MCP (`gex/mcp_server.py`) para consultar los datos desde Claude
+- Bot Discord opcional ([`discord_bot/`](discord_bot/README.md)) que difunde el
+  veredicto del estado del gamma (solo análisis derivados) — ver arriba
+- Títulos de gráficos clicables: cada título enlaza a la sección de la
+  [guía ilustrada](docs/guide/README.md) que lo explica
+- **Ajuste CFD automático (Yahoo Finance)**: conversión precisa de precios de futuros CME a precios CFD de cualquier broker (US100, US500, XAUUSD, BTCUSD).
+- **Exportación a TradingView con 1 clic**: genera automáticamente la cadena de niveles para el indicador Pine Script v5.
 
-## Backfill Databento (optionnel)
+## Backfill Databento (opcional)
 
-Copier `.env.example`, renseigner `DATABENTO_API_KEY`, puis par ex. :
+Copiar `.env.example`, rellenar `DATABENTO_API_KEY`, luego por ejemplo:
 `python -m gex.backfill --daily-days 31 --intraday-days 7 --max-cost 40`.
-Les fichiers bruts sont conservés dans `data/databento/` : relancer ne
-refacture jamais ce qui est déjà téléchargé. La passerelle Databento peut
-renvoyer des 504 sur les grosses requêtes : préférer des tranches d'une
-semaine (`--end` + `--daily-days 7`).
+Los archivos brutos se conservan en `data/databento/`: relanzar nunca
+refactura lo que ya está descargado. La pasarela Databento puede
+devolver 504 en consultas grandes: preferir tramos de una
+semana (`--end` + `--daily-days 7`).
 
-## Architecture
+## Arquitectura
 
-- `gex/ingest.py` — fetch + parsing des chaînes CBOE (retry/backoff)
-- `gex/idxopt.py` — chaînes d'indice natives via dxFeed (temps réel)
-- `gex/futopt.py` — chaînes d'options sur future NQ/ES via dxFeed
-- `gex/flowtape.py` — order flow signé (TimeAndSale + Greeks)
-- `gex/rtquote.py` — spot temps réel et bougies 1 min
-- `gex/greeks.py` — Black-Scholes vectorisé (testé sur valeurs Hull)
-- `gex/metrics.py` — GEX/DEX par strike, zero gamma, P/C, flux delta
-- `gex/store.py` — Parquet : snapshots complets (10 min), flux (1 min), historique
-- `gex/scheduler.py` — boucle APScheduler, heures de marché ET (9:30–16:15)
-- `gex/app.py` — dashboard Dash (refresh auto 60 s)
+- `gex/ingest.py` — fetch + parsing de cadenas CBOE (retry/backoff)
+- `gex/idxopt.py` — cadenas de índice nativas vía dxFeed (tiempo real)
+- `gex/futopt.py` — cadenas de opciones sobre futuros NQ/ES/GC/BTC vía dxFeed
+- `gex/flowtape.py` — order flow firmado (TimeAndSale + Greeks)
+- `gex/rtquote.py` — spot en tiempo real y velas 1 min
+- `gex/greeks.py` — Black-Scholes vectorizado (probado con valores de Hull)
+- `gex/metrics.py` — GEX/DEX por strike, zero gamma, P/C, flujo delta
+- `gex/store.py` — Parquet: snapshots completos (10 min), flujo (1 min), historial
+- `gex/scheduler.py` — bucle APScheduler, horarios de mercado ET (9:30–16:15)
+- `gex/app.py` — dashboard Dash (refresco automático 60 s)
+- `gex/scales.py` — transposición de escalas índice↔futuros y ajuste CFD
 
-## Conventions de calcul
+## Convenciones de Cálculo
 
-- **GEX** ($ par 1 % de move) = γ × OI × 100 × spot² × 0,01 — calls positifs,
-  puts négatifs (convention « naive » SpotGamma : dealers longs calls, courts puts).
-- **Zero Gamma** : recalcul du profil de GEX net sur une grille de spots ±8 %
-  (IV et maturités figées), interpolation du passage par zéro le plus proche du spot.
-- **Flux delta** (proxy) = Δvolume entre deux pulls × δ × 100 × spot. Le sens
-  taker n'est pas observable dans ce feed : pression delta-pondérée, pas un
-  vrai order-flow signé.
-- Échéances posées à 16:00 ET ; contrats expirés exclus ; 0DTE gardé en séance
-  avec plancher de 5 min sur t.
+- **GEX** ($ por 1 % de movimiento) = γ × OI × 100 × spot² × 0.01 — calls positivos,
+  puts negativos (convención «naive» SpotGamma: dealers largos calls, cortos puts).
+- **Zero Gamma**: recálculo del perfil de GEX neto sobre una grilla de spots ±8 %
+  (IV y vencimientos fijos), interpolación del cruce por cero más cercano al spot.
+- **Flujo delta** (proxy) = Δvolumen entre dos pulls × δ × 100 × spot. El lado
+  taker no es observable en este feed: presión delta-ponderada, no un
+  verdadero order-flow firmado.
+- Vencimientos fijados a 16:00 ET; contratos expirados excluidos; 0DTE conservado en sesión
+  con piso de 5 min sobre t.
 
-## Soutenir le projet
+## Apoyar el proyecto
 
-Le dashboard est gratuit, sans publicité et sans collecte de données — et il le
-restera. Si tu l'utilises et qu'il te fait gagner du temps, tu peux offrir un
-café au développement :
+El dashboard es gratuito, sin publicidad y sin recolección de datos — y así
+seguirá. Si lo usas y te ahorra tiempo, puedes invitar un café al desarrollo:
 
 [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-dwarfsquirrel-FFDD00?style=flat-square&logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/dwarfsquirrel)
 
-C'est entièrement facultatif. Un don n'ouvre droit à aucun support, aucune
-priorité sur les fonctionnalités et aucune garantie — les termes de la
-[licence MIT](LICENSE) et de l'[avertissement](DISCLAIMER.md) restent
-inchangés. Signaler un bug ou proposer une amélioration aide tout autant.
+Es completamente opcional. Una donación no otorga derecho a soporte, prioridad
+sobre funcionalidades ni garantía alguna — los términos de la
+[licencia MIT](LICENSE) y del [aviso legal](DISCLAIMER.md) permanecen
+sin cambios. Reportar un bug o proponer una mejora ayuda igualmente.
 
-## Limites connues
+## Limitaciones Conocidas
 
-- **Sans compte courtier** : données délayées 15 min — outil de lecture de
-  structure, pas d'exécution. Avec un compte, le retard disparaît mais l'outil
-  reste un outil d'analyse : ni ordre, ni exécution, ni conseil.
-- L'order flow signé ne couvre que les strikes à ±1,5 % du spot sur les 2
-  échéances les plus proches (là où se traite l'essentiel). Ses amplitudes ne
-  sont donc pas comparables à celles du proxy CBOE, qui porte sur toute la
-  chaîne.
-- Endpoint CBOE non contractuel : le format peut changer (l'ingestion est
-  isolée pour pouvoir brancher une autre source, ex. Tradier).
-- **SPY et QQQ** : ces ETF versent un dividende, or le calcul suppose un
-  rendement nul (q = 0). L'approximation reste faible sur les échéances
-  courtes mais n'est pas nulle — les indices SPX et NDX, eux, n'ont pas ce
-  biais. Ils n'ont par ailleurs pas de future associé, donc le sélecteur
-  Indice/Futures y est inactif.
+- **Sin cuenta de broker**: datos retrasados 15 min — herramienta de lectura de
+  estructura, sin ejecución. Con una cuenta, el retraso desaparece pero la herramienta
+  sigue siendo una herramienta de análisis: sin órdenes, sin ejecución, sin asesoramiento.
+- El order flow firmado solo cubre strikes a ±1.5 % del spot en los 2
+  vencimientos más cercanos (donde se negocia lo esencial). Sus amplitudes no
+  son comparables a las del proxy CBOE, que abarca toda la cadena.
+- Endpoint CBOE no contractual: el formato puede cambiar (la ingesta está
+  aislada para poder conectar otra fuente, ej. Tradier).
+- **SPY y QQQ**: estos ETF pagan dividendo, pero el cálculo supone un
+  rendimiento nulo (q = 0). La aproximación es pequeña en vencimientos
+  cortos pero no es nula — los índices SPX y NDX no tienen este
+  sesgo. Además no tienen futuro asociado, por lo que el selector
+  Índice/Futuros está inactivo para ellos.

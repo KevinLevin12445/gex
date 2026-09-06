@@ -166,6 +166,10 @@ def gamma_profile(df: pd.DataFrame, spot: float, weight_col: str = "open_interes
         return None
     rng = SETTINGS.zg_range if range_pct is None else range_pct
     n = SETTINGS.zg_steps if steps is None else steps
+    margin = max(rng * 1.5, 0.20)
+    d = d[d["strike"].between(spot * (1 - margin), spot * (1 + margin))]
+    if d.empty:
+        return None
     grid = np.linspace(spot * (1 - rng), spot * (1 + rng), n)
     k = d["strike"].to_numpy()[:, None]
     t = d["t_years"].to_numpy()[:, None]
@@ -240,28 +244,30 @@ def net_gex_at(df: pd.DataFrame, spot: float,
     return None if res is None else float(res[1][0])
 
 
-def zero_gamma(df: pd.DataFrame, spot: float, weight_col: str = "open_interest") -> float | None:
+def zero_gamma(df: pd.DataFrame, spot: float, weight_col: str = "open_interest",
+               range_pct: float | None = None) -> float | None:
     """Niveau de spot où le GEX net (recalculé à ce spot) change de signe.
 
     Recalcule le gamma BS sur une grille de spots ±zg_range en gardant IV et
     t figés, puis interpole le passage par zéro le plus proche du spot.
-
-    weight_col="open_interest" : le flip structurel (zero gamma classique).
-    weight_col="volume"        : le HVL façon volatility trigger — bascule du
-    profil pondéré par ce qui se traite (et donc se hedge) aujourd'hui.
+    Si aucun franchissement n'est trouvé dans la plage par défaut (ex. crypto/volatilité élevée),
+    élargit la recherche progressivement (jusqu'à ±35%).
     """
-    res = gamma_profile(df, spot, weight_col)
-    if res is None:
-        return None
-    grid, profile = res
-    crossings = np.where(np.diff(np.sign(profile)) != 0)[0]
-    if len(crossings) == 0:
-        return None
-    # passage par zéro le plus proche du spot
-    idx = crossings[np.argmin(np.abs(grid[crossings] - spot))]
-    x0, x1 = grid[idx], grid[idx + 1]
-    y0, y1 = profile[idx], profile[idx + 1]
-    return float(x0 - y0 * (x1 - x0) / (y1 - y0))
+    ranges = [range_pct] if range_pct is not None else [None, 0.15, 0.35]
+    for r in ranges:
+        res = gamma_profile(df, spot, weight_col, range_pct=r)
+        if res is None:
+            continue
+        grid, profile = res
+        crossings = np.where(np.diff(np.sign(profile)) != 0)[0]
+        if len(crossings) > 0:
+            idx = crossings[np.argmin(np.abs(grid[crossings] - spot))]
+            x0, x1 = grid[idx], grid[idx + 1]
+            y0, y1 = profile[idx], profile[idx + 1]
+            if y1 != y0:
+                return float(x0 - y0 * (x1 - x0) / (y1 - y0))
+            return float(x0)
+    return None
 
 
 def third_friday(year: int, month: int) -> date:

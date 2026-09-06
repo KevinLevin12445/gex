@@ -15,23 +15,19 @@ d'environnement TT_REFRESH.
 """
 from __future__ import annotations
 
+import logging
 import os
 import sys
 import urllib.parse
+from pathlib import Path
 
 import requests
 
+log = logging.getLogger(__name__)
+
 AUTH_URL = "https://my.tastytrade.com/auth.html"
 TOKEN_URL = "https://api.tastyworks.com/oauth/token"
-# HTTP et non HTTPS : le dashboard sert en clair sur 127.0.0.1, donc c'est la
-# SEULE forme que son navigateur puisse réellement atteindre. tastytrade
-# n'exige HTTPS que pour les URI publiques et accepte http sur localhost, ce
-# qui permet de récupérer le code automatiquement (cf. gex/tt_web.py) au lieu
-# de le faire recopier depuis une page d'erreur.
 REDIRECT_URI = "http://localhost:8050/oauth/callback"
-# Lecture seule, volontairement : ce projet n'exécute pas d'ordres et n'a
-# aucune raison de demander le scope "trade" (cf. README, « analyse
-# uniquement »). Un jeton qui ne peut pas trader ne peut pas mal trader.
 SCOPE = "read"
 
 
@@ -49,6 +45,110 @@ def _env(name: str) -> str | None:
     return val
 
 
+def _find_env_path() -> Path:
+    """Localise le fichier .env du projet."""
+    p = Path(".env").resolve()
+    if p.exists() or (p.parent / "pyproject.toml").exists():
+        return p
+    return Path(__file__).resolve().parent.parent / ".env"
+
+
+def _update_env_file(updates: dict[str, str | None]) -> None:
+    """Met à jour ou ajoute les clés dans le fichier .env sans écraser le reste."""
+    env_path = _find_env_path()
+    lines: list[str] = []
+    if env_path.exists():
+        try:
+            lines = env_path.read_text(encoding="utf-8").splitlines()
+        except Exception:
+            lines = []
+    elif Path(".env.example").exists():
+        try:
+            lines = Path(".env.example").read_text(encoding="utf-8").splitlines()
+        except Exception:
+            lines = []
+
+    remaining = dict(updates)
+    new_lines: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#") and "=" in line:
+            key, _ = line.split("=", 1)
+            key = key.strip()
+            if key in remaining:
+                val = remaining.pop(key)
+                if val is not None:
+                    new_lines.append(f"{key}={val}")
+                continue
+        new_lines.append(line)
+
+    for key, val in remaining.items():
+        if val is not None:
+            new_lines.append(f"{key}={val}")
+
+    try:
+        env_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+    except Exception as exc:
+        log.warning("Impossible d'écrire dans .env: %s", exc)
+
+
+def save_credentials(client_id: str, client_secret: str, refresh_token: str | None = None) -> None:
+    """Enregistre le Client ID, Client Secret et optionnellement le Refresh Token
+    dans os.environ, le fichier .env et le registre Windows HKCU."""
+    cid = client_id.strip()
+    sec = client_secret.strip()
+    os.environ["TASTYTRADE_CLIENT_ID"] = cid
+    os.environ["TASTYTRADE_CLIENT_SECRET"] = sec
+
+    updates: dict[str, str | None] = {
+        "TASTYTRADE_CLIENT_ID": cid,
+        "TASTYTRADE_CLIENT_SECRET": sec,
+    }
+    if refresh_token and refresh_token.strip():
+        ref = refresh_token.strip()
+        os.environ["TT_REFRESH"] = ref
+        updates["TT_REFRESH"] = ref
+
+    _update_env_file(updates)
+
+    if sys.platform == "win32":
+        import winreg
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment", 0,
+                                winreg.KEY_SET_VALUE) as k:
+                winreg.SetValueEx(k, "TASTYTRADE_CLIENT_ID", 0, winreg.REG_SZ, cid)
+                winreg.SetValueEx(k, "TASTYTRADE_CLIENT_SECRET", 0, winreg.REG_SZ, sec)
+                if refresh_token and refresh_token.strip():
+                    winreg.SetValueEx(k, "TT_REFRESH", 0, winreg.REG_SZ, refresh_token.strip())
+        except OSError:
+            pass
+
+
+def clear_credentials() -> None:
+    """Supprime les identifiants de session, de .env et du registre Windows."""
+    for key in ("TASTYTRADE_CLIENT_ID", "TASTYTRADE_CLIENT_SECRET", "TT_REFRESH"):
+        os.environ.pop(key, None)
+
+    _update_env_file({
+        "TASTYTRADE_CLIENT_ID": None,
+        "TASTYTRADE_CLIENT_SECRET": None,
+        "TT_REFRESH": None,
+    })
+
+    if sys.platform == "win32":
+        import winreg
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment", 0,
+                                winreg.KEY_SET_VALUE) as k:
+                for key in ("TASTYTRADE_CLIENT_ID", "TASTYTRADE_CLIENT_SECRET", "TT_REFRESH"):
+                    try:
+                        winreg.DeleteValue(k, key)
+                    except OSError:
+                        pass
+        except OSError:
+            pass
+
+
 def credentials() -> tuple[str, str]:
     cid = _env("TASTYTRADE_CLIENT_ID")
     secret = _env("TASTYTRADE_CLIENT_SECRET")
@@ -61,13 +161,6 @@ def credentials() -> tuple[str, str]:
 
 
 def authorize_url(client_id: str, state: str | None = None) -> str:
-    """URL d'autorisation à ouvrir dans le navigateur.
-
-    `state` : jeton anti-CSRF, renvoyé tel quel par tastytrade sur la
-    redirection. Le vérifier empêche qu'une page tierce fasse aboutir SON code
-    d'autorisation sur notre callback — ce qui enregistrerait le jeton de
-    quelqu'un d'autre à la place du tien.
-    """
     params = {
         "client_id": client_id,
         "redirect_uri": REDIRECT_URI,
@@ -80,18 +173,8 @@ def authorize_url(client_id: str, state: str | None = None) -> str:
 
 
 def store_refresh(token: str) -> str:
-    """Enregistre le refresh token là où `rtquote._env` sait déjà le lire.
-
-    Sur Windows : variable d'environnement utilisateur (HKCU\\Environment),
-    c'est-à-dire exactement ce que faisait `setx` manuellement — aucun nouveau
-    mécanisme, aucun fichier de secret ajouté au dépôt. La valeur est aussi
-    posée dans `os.environ` du processus courant, sinon le dashboard ne la
-    verrait qu'après redémarrage (une session héritant de son environnement au
-    lancement).
-
-    Renvoie une phrase décrivant ce qui a été fait, à afficher à l'utilisateur.
-    """
     os.environ["TT_REFRESH"] = token
+    _update_env_file({"TT_REFRESH": token})
     if sys.platform != "win32":
         return ("Jeton actif pour cette session. Pour le rendre permanent, "
                 'ajoute TT_REFRESH="…" à ton profil shell.')

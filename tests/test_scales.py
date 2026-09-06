@@ -117,3 +117,35 @@ def test_repli_sur_le_basis_de_la_chaine_sans_flux(monkeypatch):
     xf, _, mode = A._transform_for("NDX", "NQ")
     # pas de flux et pas d'état chargé : identité plutôt que niveaux faux
     assert mode in {"native", "basis"}
+
+
+def test_cfd_offset_native():
+    import numpy as np
+    xf, ratio, mode = scales.transform("GC", None, {"GC": 4471.0}, {}, cfd_offset=-60.0)
+    assert mode == "cfd"
+    assert xf(4471.0) == pytest.approx(4411.0)
+    assert xf(4500.0) == pytest.approx(4440.0)
+    assert xf(None) is None
+    arr = np.array([4471.0, 4500.0])
+    np.testing.assert_allclose(xf(arr), np.array([4411.0, 4440.0]))
+
+
+def test_cfd_offset_combined_with_basis():
+    """SPX -> ES (+33 basis) + CFD offset (-5 pts)"""
+    xf, _, mode = scales.transform(
+        "SPX", scales.scale_by_key("ES"),
+        {"SPX": 7412.0}, {"SPX": 33.0},
+        cfd_offset=-5.0
+    )
+    assert mode == "basis"
+    assert xf(7412.0) == pytest.approx(7412.0 + 33.0 - 5.0)
+
+
+def test_scale_note_with_cfd_offset():
+    from gex import app as A
+    note_es = A._scale_note("es", "GC", "GC", 1.0, "native", cfd_offset=-60.0)
+    assert "Ajuste CFD: -60.00 pts" in note_es
+
+    note_en = A._scale_note("en", "GC", "GC", 1.0, "native", cfd_offset=-60.0)
+    assert "CFD -60.00 pts" in note_en
+

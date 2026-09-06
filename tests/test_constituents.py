@@ -18,7 +18,7 @@ def test_cibles_et_constituants_disjoints():
     assert t & c == set()
     # NQ/ES : chaînes natives (gex/futopt.py), ajoutées à la suite des cibles
     # CBOE — ce sont des cibles à part entière, affichables dans le sélecteur
-    assert t == {"SPX", "NDX", "SPY", "QQQ", "NQ", "ES"}
+    assert t == {"SPX", "NDX", "SPY", "QQQ", "NQ", "ES", "GC", "BTC"}
 
 
 def test_nq_es_natifs_apres_les_cibles_cboe():
@@ -36,6 +36,8 @@ def test_nq_es_source_futopt_pas_cboe():
     from gex.config import UNDERLYINGS
     assert UNDERLYINGS["NQ"].source == "futopt"
     assert UNDERLYINGS["ES"].source == "futopt"
+    assert UNDERLYINGS["GC"].source == "futopt"
+    assert UNDERLYINGS["BTC"].source == "futopt"
     for key in ("SPX", "NDX", "SPY", "QQQ"):
         assert UNDERLYINGS[key].source == "cboe"
 
@@ -55,7 +57,7 @@ def test_scale_by_key_nq_reste_lie_a_ndx():
 def test_constituants_absents_des_echelles():
     """Une échelle d'affichage doit rester un indice ou son future."""
     keys = {s.key for s in scales.available_scales()}
-    assert keys == {"SPX", "ES", "NDX", "NQ", "SPY", "QQQ"}
+    assert keys == {"SPX", "ES", "NDX", "NQ", "SPY", "QQQ", "GC", "BTC"}
     for u in constituents():
         assert u.key not in keys
 

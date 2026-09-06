@@ -62,6 +62,13 @@ IDLE_TIMEOUT_S = 20.0
 DEFAULT_WINDOW = 0.08
 DEFAULT_MAX_DAYS = 14
 
+PRODUCT_PARAMS: dict[str, tuple[float, int]] = {
+    "NQ": (0.08, 14),
+    "ES": (0.08, 14),
+    "GC": (0.08, 30),
+    "BTC": (0.20, 45),
+}
+
 # dxFeed livre fiablement une salve de souscriptions envoyée D'UN SEUL COUP à
 # la connexion (constaté : jusqu'à 9 000 passent, 15 000 sont rejetées avec
 # "BAD_ACTION: Your subscription rate is too high"). Fractionner en plusieurs
@@ -423,13 +430,17 @@ def _reference_spot(product_code: str, access_token: str) -> float | None:
     return None
 
 
-def build_native_chain(product_code: str, window: float = DEFAULT_WINDOW,
-                       max_days: int = DEFAULT_MAX_DAYS) -> pd.DataFrame | None:
+def build_native_chain(product_code: str, window: float | None = None,
+                       max_days: int | None = None) -> pd.DataFrame | None:
     """Chaîne d'options natives complète, prête pour les fonctions de `metrics`.
 
     Renvoie None si le spot ou le multiplicateur sont indisponibles — mieux
     vaut ne rien produire que des niveaux faux.
     """
+    default_w, default_d = PRODUCT_PARAMS.get(product_code, (DEFAULT_WINDOW, DEFAULT_MAX_DAYS))
+    window = window if window is not None else default_w
+    max_days = max_days if max_days is not None else default_d
+
     _, _, access = quote_token()
     spot = _reference_spot(product_code, access)
     if not spot:
