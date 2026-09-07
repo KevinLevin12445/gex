@@ -14,9 +14,9 @@ RUN pip install --no-cache-dir --user -r requirements.txt
 # Copiar archivos de la aplicación
 COPY --chown=user . /app
 
-# Configuración de red (compatible con Hugging Face Spaces, Render, Railway)
-ENV HOST=0.0.0.0
+# Configuración de red para Hugging Face Spaces
 ENV PORT=7860
+ENV HOST=0.0.0.0
 EXPOSE 7860
 
 CMD ["python", "run.py"]

@@ -28,6 +28,91 @@
   --font-mono: 'JetBrains Mono', monospace;
 }
 
+/* ================================================================
+   Design system 2.0 — terminal financiero sobrio y orientado a lectura.
+   Estas reglas finales sustituyen los acentos neón de la primera interfaz.
+   ================================================================ */
+:root {
+  --page: #0b1018;
+  --surface: #121a27;
+  --surface-2: #182334;
+  --surface-hover: #202d40;
+  --ink: #f4f7fb;
+  --ink-2: #b5c0d0;
+  --muted: #7f8ca1;
+  --line: #263447;
+  --line-hover: #3b4d66;
+  --grid: #223044;
+  --accent: #69b7ff;
+  --pos: #4fd1b5;
+  --neg: #fb7185;
+  --warn: #f6c85f;
+  --ok: #55d89b;
+  --radius: 12px;
+  --font: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+body { background: var(--page); color: var(--ink); }
+.topbar {
+  position: sticky; top: 0; z-index: 50; padding: 12px 28px 10px;
+  background: rgba(11,16,24,.94); border-bottom: 1px solid var(--line);
+  backdrop-filter: blur(18px);
+}
+.topbar-row { max-width: 1680px; margin: 0 auto; }
+.topbar-actions { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.brand-mark { background: #69b7ff; color:#0b1018; box-shadow:none; }
+.brand { font-size:16px; }
+.toolbar { max-width: 1680px; margin: 7px auto 0; gap:14px; padding:10px 0 0; border-top:1px solid rgba(38,52,71,.65); }
+.ctl { gap:8px; }
+.ctl-label { font-size:10px; color:var(--muted); letter-spacing:.09em; }
+.seg,.check { background:#0d1420; border-color:var(--line); border-radius:9px; }
+.seg label,.check label { min-height:30px; padding:6px 10px; color:var(--ink-2); }
+.seg label:has(input:checked) { border-color:rgba(105,183,255,.6); background:#1d2b3e; color:var(--ink); box-shadow:none; }
+.symbol-picker { width:210px; min-width:180px; }
+.symbol-picker .Select-control { background:#0d1420; border-color:var(--line); min-height:36px; }
+.symbol-picker .Select-menu-outer { background:var(--surface-2); border-color:var(--line-hover); }
+.app-shell { max-width:1680px; margin:0 auto; padding:0 28px 36px; }
+.workspace-hero {
+  margin:20px 0 12px; padding:22px 24px; border-radius:14px; border-color:var(--line);
+  background:linear-gradient(120deg, #162235 0%, #121a27 64%, #142232 100%); box-shadow:none;
+}
+.workspace-copy h1 { font-size:28px; letter-spacing:-.035em; }
+.workspace-status { border:1px solid var(--line); border-radius:999px; padding:6px 10px; background:#0d1420; }
+.workspace-summary { color:var(--ink-2); }
+.tabbar { margin:16px 0 0; border-bottom:1px solid var(--line); background:transparent; }
+.tab-item { padding:11px 14px !important; color:var(--muted) !important; border:none !important; background:transparent !important; }
+.tab-item:hover { color:var(--ink) !important; background:rgba(255,255,255,.025) !important; }
+.tab-item--selected { color:var(--ink) !important; border-bottom:2px solid var(--accent) !important; background:transparent !important; }
+.page-pane { padding-top:12px; animation: page-enter .18s ease-out; }
+@keyframes page-enter { from { opacity:.4; transform:translateY(3px); } to { opacity:1; transform:none; } }
+.section-head { border-bottom:1px solid rgba(38,52,71,.72); margin-top:10px; padding:17px 2px 10px; }
+.section-kicker { color:var(--ink); font-size:12px; letter-spacing:.06em; }
+.section-note { color:var(--muted); }
+.cards { gap:12px; margin:14px 0; }
+.stat { min-width:170px; flex:1; padding:15px 16px; border:1px solid var(--line); border-radius:var(--radius); background:var(--surface); box-shadow:none; }
+.stat::before { width:3px; border-radius:4px; }
+.stat:hover { transform:translateY(-1px); border-color:var(--line-hover); box-shadow:none; }
+.stat-label { color:var(--muted); font-size:10px; letter-spacing:.08em; }
+.stat-value { margin-top:7px; font-size:22px; }
+.stat-sub { margin-top:5px; color:var(--ink-2); }
+.row { gap:14px; margin-bottom:16px; }
+.row > * { min-width:320px; border:1px solid var(--line); border-radius:var(--radius); overflow:hidden; background:var(--surface); }
+.daybar { margin:14px 0 8px; padding:10px 12px; border:1px solid var(--line); border-radius:10px; background:var(--surface); }
+.hint { margin:12px 0; padding:11px 13px; border-left:3px solid var(--accent); border-radius:0 8px 8px 0; background:rgba(105,183,255,.08); color:var(--ink-2); }
+.btn,.cfd-btn { border-radius:8px; border-color:var(--line-hover); background:#1d2b3e; color:var(--ink); }
+.btn:hover,.cfd-btn:hover { background:#293b53; border-color:var(--accent); box-shadow:none; }
+.footer { border-top-color:var(--line); color:var(--muted); }
+@media (max-width: 760px) {
+  .topbar { padding:10px 14px; }
+  .app-shell { padding:0 14px 24px; }
+  .topbar-actions,.toolbar { align-items:stretch; }
+  .symbol-picker { width:100%; }
+  .ctl { width:100%; justify-content:space-between; }
+  .workspace-hero { margin-top:14px; padding:18px; }
+  .workspace-copy h1 { font-size:23px; }
+  .row > * { min-width:100%; }
+  .tab-item { padding:10px 11px !important; font-size:11px; }
+}
+
 * { box-sizing: border-box; }
 
 body {
@@ -147,6 +232,39 @@ body {
   padding-left: 8px;
   border-left: 1px solid var(--line);
   margin-left: 2px;
+}
+
+/* ---------------------------------------------------------------- workspace refresh */
+.workspace-hero {
+  margin: 22px 24px 16px;
+  padding: 24px 26px 20px;
+  border: 1px solid rgba(0,240,255,.14);
+  border-radius: 16px;
+  background:
+    radial-gradient(circle at 85% 15%, rgba(0,240,255,.12), transparent 32%),
+    linear-gradient(135deg, rgba(22,30,50,.98), rgba(10,15,27,.98));
+  box-shadow: 0 18px 50px rgba(0,0,0,.22), inset 0 1px 0 rgba(255,255,255,.04);
+}
+.workspace-head { display:flex; justify-content:space-between; align-items:flex-start; gap:20px; }
+.workspace-copy h1 { margin:5px 0 0; font-size:clamp(22px,3vw,34px); letter-spacing:-.04em; font-weight:700; }
+.eyebrow,.section-kicker { color:var(--accent); text-transform:uppercase; letter-spacing:.14em; font-size:10px; font-weight:700; }
+.workspace-status { color:var(--ink-2); font-size:12px; display:flex; gap:8px; align-items:center; padding-top:5px; }
+.live-pulse { color:var(--ok); text-shadow:0 0 10px var(--ok); animation:pulse 1.8s infinite; }
+.workspace-summary { min-height:24px; margin-top:18px; color:var(--ink-2); font-size:13px; }
+.section-head { display:flex; align-items:center; gap:12px; padding:16px 2px 9px; }
+.section-note { color:var(--muted); font-size:11px; }
+.symbol-picker { width:190px; min-width:190px; }
+.symbol-picker .Select-control { background:#090d16; border:1px solid var(--line); border-radius:8px; min-height:34px; }
+.symbol-picker .Select-value-label,.symbol-picker .Select-placeholder { color:var(--ink)!important; font-size:12px; }
+.symbol-picker .Select-menu-outer { background:var(--surface-2); border:1px solid var(--line-hover); color:var(--ink); z-index:100; }
+.symbol-picker .Select-option { background:var(--surface-2); color:var(--ink-2); }
+.symbol-picker .Select-option:hover { background:var(--surface-hover); color:var(--ink); }
+@keyframes pulse { 0%,100%{opacity:.65} 50%{opacity:1} }
+@media (max-width:720px) {
+  .workspace-hero { margin:14px 12px; padding:18px; }
+  .topbar { padding-left:12px; padding-right:12px; }
+  .workspace-head { flex-direction:column; }
+  .symbol-picker { width:100%; min-width:150px; }
 }
 
 /* toolbar : groupes de contrôles étiquetés */
@@ -516,6 +634,19 @@ body {
 
 .row { display: flex; gap: 12px; flex-wrap: wrap; }
 .row > * { flex: 1; min-width: 340px; }
+
+/* Gráfico principal del Strike Map: nunca participa en la grilla de dos
+   columnas de GEX/DEX.  Así conserva todo el ancho útil del terminal. */
+.primary-overlay-chart {
+  width: 100%;
+  min-width: 0;
+  margin: 0 0 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--surface);
+}
+.primary-overlay-chart > .dash-graph { width: 100%; }
 
 .graph-card {
   background: var(--surface);
@@ -1522,4 +1653,3 @@ body {
 #heat-intraday-pane, #heat-bubbles-pane, #heat-term-pane, #heat-hist-pane, #heat-overlay-pane {
   animation: fadeIn 0.2s ease-in-out;
 }
-
