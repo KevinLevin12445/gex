@@ -20,6 +20,7 @@ from gex.infrastructure.logging import setup_logging
 from gex.adapters.market_data.rtquote import PUBLIC_QUOTES, QUOTES
 from gex.infrastructure.scheduling.scheduler import start_scheduler
 from gex.adapters.market_data.tickcapture import CAPTURE
+from gex.adapters.market_data.alpaca import ALPACA
 
 
 def main(host: str | None = None, port: int | None = None) -> None:
@@ -49,6 +50,9 @@ def _start_background_services() -> None:
     TAPE.start()
     # captura tick a tick continua NQ/ES (24/5): sesión dxLink dedicada
     CAPTURE.start()
+    # Optional read-only OPRA quotes/trades. The CBOE delayed chain remains
+    # authoritative for analytics and is the explicit fallback on failure.
+    ALPACA.start()
 
 
 if __name__ == "__main__":
