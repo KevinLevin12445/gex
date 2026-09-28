@@ -589,6 +589,10 @@ def _market_diagnostics_payload() -> dict[str, object]:
     symbols = tuple(_symbol_diagnostics(symbol, st, now) for symbol, st in items)
     status, _ = connection_status()
     websocket_status = "CONNECTED" if credentials_present() and status == "connected" else status.upper()
+    from gex.adapters.market_data.alpaca import ALPACA
+    alpaca = ALPACA.status.to_dict()
+    if alpaca["state"] == "connected":
+        websocket_status = "ALPACA_CONNECTED"
     return diagnostics_payload(
         symbols,
         api_status="OK",
@@ -597,6 +601,8 @@ def _market_diagnostics_payload() -> dict[str, object]:
         metadata={
             "market_open": market_is_open(),
             "symbol_count": len(symbols),
+            "provenance": "cboe_delayed_chain",
+            "alpaca": alpaca,
         },
     )
 
@@ -606,6 +612,11 @@ def register_api(app) -> None:
     instance Flask — pratique pour les tests, qui n'ont pas besoin de monter
     tout le dashboard."""
     server: Flask = app.server if hasattr(app, "server") else app
+
+    @server.route("/api/v1/market-data/status")
+    def _market_data_status():
+        from gex.adapters.market_data.alpaca import ALPACA
+        return jsonify(ALPACA.status.to_dict())
 
     @server.after_request
     def _cors(resp):

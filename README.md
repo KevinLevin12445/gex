@@ -27,6 +27,20 @@ for creating and maintaining the original foundation that made this project poss
 
 This repository is an independently developed fork and has undergone significant architectural restructuring and refactoring.
 
+### Optional Alpaca OPRA stream
+
+The dashboard can connect to Alpaca's options WebSocket for read-only quotes
+and trades when `ALPACA_API_KEY`, `ALPACA_SECRET_KEY`, and a comma-separated
+`ALPACA_OPTION_SYMBOLS` list are configured. Credentials are read from
+environment variables (or `.env`) and are never displayed or logged.
+
+This stream is supplementary: Alpaca events do not provide the complete chain,
+SPX spot, Greeks, or open interest used by this dashboard. The analytics chain
+therefore remains the delayed CBOE feed, and any missing or failed Alpaca
+connection is reported explicitly as a fallback to `cboe_delayed`. No order
+placement or trading endpoints are used. Health is available from the
+read-only `/api/v1/market-data/status` endpoint and the Diagnostics view.
+
 The goal is not simply to modify the original interface, but to evolve the codebase into a more modular, maintainable, and extensible Gamma Exposure analytics platform.
 
 ## What Changed From the Original Project
