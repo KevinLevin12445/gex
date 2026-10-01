@@ -41,6 +41,27 @@ connection is reported explicitly as a fallback to `cboe_delayed`. No order
 placement or trading endpoints are used. Health is available from the
 read-only `/api/v1/market-data/status` endpoint and the Diagnostics view.
 
+### Optional IBKR API monitor
+
+GEX also includes a disabled-by-default, read-only IBKR TWS/IB Gateway adapter.
+It is designed to request one explicitly configured SPX option quote only
+(bid, ask, last); the default live TWS API port is `7496` (paper TWS commonly
+uses `7497`, which can be selected with `IBKR_API_PORT`). It
+does not enumerate the chain, request account data, or place orders. The
+delayed CBOE chain remains authoritative for GEX analytics and contract-level
+open interest. IBKR option quote/OI coverage is not assumed from an API
+connection alone.
+
+Before enabling this adapter, obtain any required IBKR API approval, review and
+accept the applicable data terms, enable TWS's Read-Only API option, and verify
+that using the API for your intended personal analytics is permitted. Install
+the optional client with `pip install -e ".[ibkr]"`. Then configure
+`IBKR_API_ENABLED=true`, `IBKR_API_ACKNOWLEDGED=true`, the local TWS socket
+settings, and a valid single option contract in `.env`. Do not place IBKR
+usernames or passwords in GEX. The adapter permits loopback connections only.
+Its status is available at `/api/v1/ibkr/status`; failures continue to identify
+`cboe_delayed` as the fallback.
+
 The goal is not simply to modify the original interface, but to evolve the codebase into a more modular, maintainable, and extensible Gamma Exposure analytics platform.
 
 ## What Changed From the Original Project

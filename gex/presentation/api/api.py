@@ -590,9 +590,13 @@ def _market_diagnostics_payload() -> dict[str, object]:
     status, _ = connection_status()
     websocket_status = "CONNECTED" if credentials_present() and status == "connected" else status.upper()
     from gex.adapters.market_data.alpaca import ALPACA
+    from gex.adapters.market_data.ibkr import IBKR
     alpaca = ALPACA.status.to_dict()
+    ibkr = IBKR.status.to_dict()
     if alpaca["state"] == "connected":
         websocket_status = "ALPACA_CONNECTED"
+    if ibkr["state"] in {"subscribed", "data_received"}:
+        websocket_status = "IBKR_API_CONNECTED"
     return diagnostics_payload(
         symbols,
         api_status="OK",
@@ -603,6 +607,7 @@ def _market_diagnostics_payload() -> dict[str, object]:
             "symbol_count": len(symbols),
             "provenance": "cboe_delayed_chain",
             "alpaca": alpaca,
+            "ibkr": ibkr,
         },
     )
 
@@ -616,7 +621,18 @@ def register_api(app) -> None:
     @server.route("/api/v1/market-data/status")
     def _market_data_status():
         from gex.adapters.market_data.alpaca import ALPACA
-        return jsonify(ALPACA.status.to_dict())
+        from gex.adapters.market_data.ibkr import IBKR
+        alpaca = ALPACA.status.to_dict()
+        return jsonify({
+            **alpaca,
+            "analytics_chain_source": "cboe_delayed",
+            "ibkr": IBKR.status.to_dict(),
+        })
+
+    @server.route("/api/v1/ibkr/status")
+    def _ibkr_status():
+        from gex.adapters.market_data.ibkr import IBKR
+        return jsonify(IBKR.status.to_dict())
 
     @server.after_request
     def _cors(resp):

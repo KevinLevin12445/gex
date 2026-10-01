@@ -48,6 +48,9 @@ dev = ["pytest>=8.3"]
 # et le reste du dashboard fonctionne. À installer sur la machine du dashboard
 # qui alimente le bot : pip install ".[charts]".
 charts = ["kaleido"]
+# Optional local IBKR TWS/IB Gateway API client. Never required for normal GEX
+# startup; the adapter stays disabled until explicitly enabled by the user.
+ibkr = ["ibapi>=9.81.1"]
 
 [project.urls]
 Homepage = "https://github.com/Darthreign/gex-dashboard"
