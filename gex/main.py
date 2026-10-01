@@ -21,6 +21,7 @@ from gex.adapters.market_data.rtquote import PUBLIC_QUOTES, QUOTES
 from gex.infrastructure.scheduling.scheduler import start_scheduler
 from gex.adapters.market_data.tickcapture import CAPTURE
 from gex.adapters.market_data.alpaca import ALPACA
+from gex.adapters.market_data.ibkr import IBKR
 
 
 def main(host: str | None = None, port: int | None = None) -> None:
@@ -53,6 +54,9 @@ def _start_background_services() -> None:
     # Optional read-only OPRA quotes/trades. The CBOE delayed chain remains
     # authoritative for analytics and is the explicit fallback on failure.
     ALPACA.start()
+    # Disabled unless explicitly enabled after IBKR API approval; monitors a
+    # single configured option contract and never sends orders.
+    IBKR.start()
 
 
 if __name__ == "__main__":
